@@ -35,7 +35,7 @@ __constant__ float T, r, sigma, rho, alpha, dt, con1, con2;
 
 
 ////////////////////////////////////////////////////////////////////////
-// kernel routine
+// kernel routine basic. As provided in practical 2.
 ////////////////////////////////////////////////////////////////////////
 
 
@@ -73,6 +73,48 @@ __global__ void pathcalc(float *d_z, float *d_v)
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff;
 }
 
+////////////////////////////////////////////////////////////////////////
+// kernel routine level path calc. 
+////////////////////////////////////////////////////////////////////////
+
+#define pathcalc_level<half> pathcalc_low;
+#define pathcalc_level<float> pathcalc_mid;
+#define pathcalc_level<double> pathcalc_high;
+
+template <T>
+__global__ void pathcalc_level(T *d_z, T *d_v)
+{
+  float s1, s2, y1, y2, payoff;
+  int   ind;
+
+  // move array pointers to correct position
+
+  // version 1
+  ind = threadIdx.x + 2*N*blockIdx.x*blockDim.x;
+
+
+  // path calculation
+
+  s1 = 1.0f;
+  s2 = 1.0f;
+
+  for (int n=0; n<N; n++) {
+    y1   = d_z[ind];
+    ind += blockDim.x;      // shift pointer to next element
+
+    y2   = rho*y1 + alpha*d_z[ind];
+    ind += blockDim.x;      // shift pointer to next element
+
+    s1 = s1*(con1 + con2*y1);
+    s2 = s2*(con1 + con2*y2);
+  }
+
+  // put payoff value into device array
+  payoff = 0.0f;
+  if ( fabs(s1-1.0f)<0.1f && fabs(s2-1.0f)<0.1f ) payoff = exp(-r*T);
+
+  d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff;
+}
 
 ////////////////////////////////////////////////////////////////////////
 // Main program
@@ -95,8 +137,11 @@ int mlmc(bool use_debug, bool use_timings){
 
   float milli;
   cudaEvent_t start, stop;
-  cudaEventCreate(&start);
-  cudaEventCreate(&stop);
+
+  if (use_timings) {
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+  }
 
   // allocate memory on host and device
 
@@ -133,35 +178,40 @@ int mlmc(bool use_debug, bool use_timings){
   // Kernel speed then depends on the method of which indexing method
   // to access by.
 
-  cudaEventRecord(start);
+  if (use_timings)
+    cudaEventRecord(start);
 
   curandGenerator_t gen;
   checkCudaErrors( curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT) );
   checkCudaErrors( curandSetPseudoRandomGeneratorSeed(gen, 1234ULL) );
   checkCudaErrors( curandGenerateNormal(gen, d_z, 2*h_N*NPATH, 0.0f, 1.0f) );
  
-  cudaEventRecord(stop);
-  cudaEventSynchronize(stop);
-  cudaEventElapsedTime(&milli, start, stop);
+  if (use_timings) {
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&milli, start, stop);
 
-  printf("CURAND normal RNG  execution time (ms): %f,  samples/sec: %e \n",
-          milli, 2.0*h_N*NPATH/(0.001*milli));
+    printf("CURAND normal RNG  execution time (ms): %f,  samples/sec: %e \n",
+            milli, 2.0*h_N*NPATH/(0.001*milli));
+  }
 
   // execute kernel and time it
 
   cudaEventRecord(start);
 
-  pathcalc<<<NPATH/64, 64>>>(d_z, d_v);
+  pathcalc_low<<<NPATH/64, 64>>>(d_z, d_v);
   getLastCudaError("pathcalc execution failed\n");
 
-  cudaEventRecord(stop);
-  cudaEventSynchronize(stop);
-  cudaEventElapsedTime(&milli, start, stop);
+  if (use_timings) {
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&milli, start, stop);
 
-  printf("Monte Carlo kernel execution time (ms): %f \n",milli);
+    printf("Monte Carlo kernel execution time (ms): %f \n",milli);
+  }
 
   // copy back results
-
+  
   checkCudaErrors( cudaMemcpy(h_v, d_v, sizeof(float)*NPATH,
                    cudaMemcpyDeviceToHost) );
 
