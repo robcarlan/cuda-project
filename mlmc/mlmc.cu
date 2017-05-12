@@ -96,7 +96,7 @@ __global__ void pathcalc(float *d_z, float *d_v)
 // Main program
 ////////////////////////////////////////////////////////////////////////
 
-int main(int argc, const char **argv){
+int mlmc(bool use_debug, bool use_timings){
     
   int     NPATH=960000, h_N=100;
   float   h_T, h_r, h_sigma, h_rho, h_alpha, h_dt, h_con1, h_con2;
@@ -105,7 +105,9 @@ int main(int argc, const char **argv){
 
   // initialise card
 
-  findCudaDevice(argc, argv);
+  const char * arg = "hi";
+  const char ** argv = &arg;
+  findCudaDevice(0, argv);
 
   // initialise CUDA timing
 
@@ -207,4 +209,5 @@ int main(int argc, const char **argv){
 
   cudaDeviceReset();
 
+  return 0;
 }

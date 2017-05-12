@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <getopt.h>
 
-extern int mlmc(bool use_debug, bool use_timings)
+extern int mlmc(bool use_debug, bool use_timings);
 
 int main (int argc, char **argv) {
 

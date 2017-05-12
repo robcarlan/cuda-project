@@ -7,14 +7,13 @@ NVCCFLAGS	:= -lineinfo -arch=sm_35 --ptxas-options=-v --use_fast_math
 
 all:	mlmc 
 
-mlmc.o:	mlmc.cu Makefile
-	nvcc mlmc.cu -o mlmc $(INC) $(NVCCFLAGS) $(LIB)
-	
 main.o:	main.cpp Makefile
 	g++ -c -fPIC -o main.o main.cpp
-	
-mlmc:
-	main.o mlmc.o Makefile
+
+mlmc.o:	mlmc.cu Makefile
+	nvcc mlmc.cu -c -o mlmc.o $(INC) $(NVCCFLAGS) $(LIB)	
+
+mlmc:	main.o mlmc.o Makefile
 	g++ -fPIC -o mlmc main.o mlmc.o $(LIB)
 
 clean:
