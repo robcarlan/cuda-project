@@ -46,19 +46,8 @@ __global__ void pathcalc(float *d_z, float *d_v)
 
   // move array pointers to correct position
 
-  //Version 1:
-  //each thread reads in the offsetted threadIdx, giving all threads reading in a contiguous block of 32. 
-  //When advancing, each index simply skipd forward by a block, so all threads are still aligned at the block level.
-
-  //Version 2
-  //index is seperated based on rows of N, which dont allign to blocks / provide locality.
-  //So in the for loop oer N, each thread advances by 1, which doesn't allign to blocks and requires a lot of cache reloading
-
   // version 1
   ind = threadIdx.x + 2*N*blockIdx.x*blockDim.x;
-
-  // version 2
-  //ind = 2*N*threadIdx.x + 2*N*blockIdx.x*blockDim.x;
 
 
   // path calculation
@@ -68,23 +57,16 @@ __global__ void pathcalc(float *d_z, float *d_v)
 
   for (int n=0; n<N; n++) {
     y1   = d_z[ind];
-    // version 1
     ind += blockDim.x;      // shift pointer to next element
-    // version 2
-    //ind += 1;
 
     y2   = rho*y1 + alpha*d_z[ind];
-    // version 1
     ind += blockDim.x;      // shift pointer to next element
-    // version 2
-    //ind += 1;
 
     s1 = s1*(con1 + con2*y1);
     s2 = s2*(con1 + con2*y2);
   }
 
   // put payoff value into device array
-
   payoff = 0.0f;
   if ( fabs(s1-1.0f)<0.1f && fabs(s2-1.0f)<0.1f ) payoff = exp(-r*T);
 
