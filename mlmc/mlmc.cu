@@ -10,21 +10,10 @@
 
 #include <cuda.h>
 #include <curand.h>
+#include <cuda_fp16.h>
 
+#include "fp16_conversion"
 #include "helper_cuda.h"
-
-/*
- * 	VERSION 1
- * 	CURAND normal RNG  execution time (ms): 34,  samples/sec: 6.638471e+08
-	Monte Carlo kernel execution time (ms): 4 ish.854305
-	Average value and standard deviation of error  =    0.41732812    0.00048176
- */
-
-/* VERSION 2
- *	CURAND normal RNG  execution time (ms): 34.374176,  samples/sec: 5.278470e+09
-	Monte Carlo kernel execution time (ms): 37 ish.758499
-	Average value and standard deviation of error  =    0.41732812    0.00048176
- */
 
 ////////////////////////////////////////////////////////////////////////
 // CUDA global constants
@@ -32,7 +21,6 @@
 
 __constant__ int   N;
 __constant__ float T, r, sigma, rho, alpha, dt, con1, con2;
-
 
 ////////////////////////////////////////////////////////////////////////
 // kernel routine basic. As provided in practical 2.
@@ -77,12 +65,12 @@ __global__ void pathcalc(float *d_z, float *d_v)
 // kernel routine level path calc. 
 ////////////////////////////////////////////////////////////////////////
 
-#define pathcalc_level<half> pathcalc_low;
-#define pathcalc_level<float> pathcalc_mid;
-#define pathcalc_level<double> pathcalc_high;
+#define pathcalc_low pathcalc_level<1>
+#define pathcalc_mid pathcalc_level<2>
+#define pathcalc_high pathcalc_level<3>
 
-template <T>
-__global__ void pathcalc_level(T *d_z, T *d_v)
+template <int level>
+__global__ void pathcalc_level(float *d_z, float *d_v)
 {
   float s1, s2, y1, y2, payoff;
   int   ind;
@@ -120,7 +108,45 @@ __global__ void pathcalc_level(T *d_z, T *d_v)
 // Main program
 ////////////////////////////////////////////////////////////////////////
 
-int mlmc(bool use_debug, bool use_timings){
+/*
+   P = mlmc(Lmin,Lmax,N0,eps, mlmc_l, alpha,beta,gamma, Nl)
+ 
+   multilevel Monte Carlo control routine
+
+   num_levels  = levels of refinement       >= 2
+   n_initial    = initial number of samples         > 0
+   epsilon   = desired accuracy (rms error)      > 0 
+ 
+   alpha -> weak error is  O(2^{-alpha*l})
+   beta  -> variance is    O(2^{-beta*l})
+   gamma -> sample cost is O(2^{gamma*l})
+
+   if alpha, beta, gamma are not positive then they will be estimated
+
+   mlmc_l(l,N,sums)   low-level function
+        l       = level
+        N       = number of paths
+        sums[0] = sum(cost)
+        sums[1] = sum(Y)
+        sums[2] = sum(Y.^2)
+        where Y are iid samples with expected value:
+        E[P_0]           on level 0
+        E[P_l - P_{l-1}] on level l>0
+
+   P     = value
+   Nl    = number of samples at each level
+   NlCl  = total cost of samples at each level
+
+*/
+
+
+int mlmc(
+	int num_levels,
+	int n_initial, float epsilon, 
+	float alpha_0, float beta_0, float gamma_0, 
+	int &out_samples_per_level, float &out_cost_per_level,
+	bool use_debug, bool use_timings)
+			{
     
   int     NPATH=960000, h_N=100;
   float   h_T, h_r, h_sigma, h_rho, h_alpha, h_dt, h_con1, h_con2;
