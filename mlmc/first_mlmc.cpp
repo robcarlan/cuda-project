@@ -30,13 +30,15 @@
 
 */
 
-
+#include <stdio.h>
+#include <stdlib.h>
 #include <math.h>
+
+extern void mcqmc06_l(int l, int N, double *sums); 
 
 void regression(int, float *, float *, float &a, float &b);
 
 float mlmc(int Lmin, int Lmax, int N0, float eps,
-           void (*mlmc_l)(int, int, double *),
            float alpha_0,float beta_0,float gamma_0, int *Nl, float *Cl) {
 
   double sums[7], suml[3][21];
@@ -100,7 +102,7 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
       if (diag) printf(" %d ",dNl[l]);
 
       if (dNl[l]>0) {
-        mlmc_l(l,dNl[l],sums);
+        mcqmc06_l(l,dNl[l],sums);
         suml[0][l] += (float) dNl[l];
         suml[1][l] += sums[1];
         suml[2][l] += sums[2];

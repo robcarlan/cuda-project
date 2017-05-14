@@ -139,8 +139,7 @@ __global__ void pathcalc_level(float *d_z, float *d_v)
 
 */
 
-
-int mlmc(
+int mlmc_gpu(
 	int num_levels,
 	int n_initial, float epsilon, 
 	float alpha_0, float beta_0, float gamma_0, 

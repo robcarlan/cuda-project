@@ -1,4 +1,5 @@
 
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
@@ -7,7 +8,7 @@ extern float mlmc(
 	int num_levels,
 	int n_initial, float epsilon, 
 	float alpha_0, float beta_0, float gamma_0, 
-	int &out_samples_per_level, float &out_cost_per_level,
+	int *out_samples_per_level, float *out_cost_per_level,
 	bool use_debug, bool use_timings);
 
 int main (int argc, char **argv) {
@@ -17,15 +18,15 @@ int main (int argc, char **argv) {
     int debug_flag = 0;
     int use_timings = 0;
 	
-	int num_levels = 3;
-	int num_initial = 100;
+    int num_levels = 3;
+    int num_initial = 100;
 	
-	float epsilon = 0.1f;
-	float alpha = -1.0f;
-	float beta = -1.0f;
-	float gamma = -1.0f;
+    float epsilon = 0.1f;
+    float alpha = -1.0f;
+    float beta = -1.0f;
+    float gamma = -1.0f;
 	
-	char *fp_out = 0;
+    char *fp_out = 0;
 
     //Option parser
     while (c != -1) {
@@ -62,7 +63,7 @@ int main (int argc, char **argv) {
 			case 'l':
 				printf("using num_levels :%s", optarg);
 				num_levels = atoi(optarg);	
-			case 'l':
+			case 'i':
 				printf("using num_initial :%s", optarg);
 				num_initial = atoi(optarg);	
 			case 'a':
@@ -81,11 +82,16 @@ int main (int argc, char **argv) {
 
     printf("Hi \n");
 
+    int *p_samples_per_level_out;
+    float *p_cost_per_level_out;
+
     //Main MLMC code
-    float val = 
-		mlmc(
-			
-			debug_flag, use_timings);
+    float val = mlmc(
+	num_levels, num_initial, epsilon,
+	alpha, beta, gamma,
+	p_samples_per_level_out,
+	p_cost_per_level_out,
+	debug_flag, use_timings);
 
 
     return 0;
