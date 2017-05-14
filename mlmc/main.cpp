@@ -48,7 +48,7 @@ int main (int argc, char **argv) {
 		static struct option long_options[]  = {
 			{"debug", 		no_argument, 0, 'd'},
 			{"num_levels", 	required_argument, 	&num_levels, 'l'},
-			{"num_initial", required_argument, 	&num_initial, 'i'},
+			{"num_initial", required_argument, 	0, 'i'},
 			{"epsilon", 	required_argument, 	0, 'e'},
 			{"alpha", 		required_argument, 	0, 'a'},
 			{"beta", 		required_argument, 	0, 'b'},
@@ -100,15 +100,15 @@ int main (int argc, char **argv) {
 			break;
 		    case 'a':
 			printf("using alpha :%s\n", optarg);
-			alpha = atoi(optarg);	
+			alpha = atof(optarg);	
 			break;
 		    case 'b':
 			printf("using beta :%s\n", optarg);
-			beta = atoi(optarg);	
+			beta = atof(optarg);	
 			break;
 		    case 'g':
 			printf("using gamma :%s\n", optarg);
-			gamma = atoi(optarg);	
+			gamma = atof(optarg);	
 			break;
 		    case 'd':
 			printf("Using debug mode. \n");
@@ -119,11 +119,13 @@ int main (int argc, char **argv) {
 		}
     }
 
+    bool gpu_version = false;
+
     run_and_print_stats("CPU",
 		num_levels, num_initial, epsilon,
 		alpha, beta, gamma,
 		debug_flag, use_timings,
-		true, 0);
+		gpu_version, 0);
 
     return 0;
 }
@@ -137,11 +139,16 @@ void run_and_print_stats(
 		bool use_debug, bool use_timings,
 		bool gpu_version, int variation) {
 
+    printf("----------------------------\n");
     printf("Running %s: \n", run_name);
+    printf("----------------------------\n");
     int *p_samples_per_level_out = (int *)malloc((num_levels+1)*sizeof(int));
     float *p_cost_per_level_out = (float *)malloc((num_levels+1)*sizeof(float));
 
     float val;
+
+    printf("num_levels: %d\nnum_initial: %d\nepsilon: %f\nalpha: %f\nbeta: %f\ngamma: %f", 
+	   num_levels, n_initial, epsilon, alpha, beta, gamma);
 
     if (!gpu_version) {
     	//Run the CPU version this project is based off

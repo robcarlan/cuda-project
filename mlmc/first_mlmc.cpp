@@ -121,7 +121,11 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
       if (diag) printf(" %d ",dNl[l]);
 
       if (dNl[l]>0) {
+
+
         mcqmc06_l(l,dNl[l],sums);
+
+
         suml[0][l] += (float) dNl[l];
         suml[1][l] += sums[1];
         suml[2][l] += sums[2];

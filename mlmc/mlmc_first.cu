@@ -13,40 +13,66 @@
 
 #include <helper_cuda.h>
 
+float mlmc(int Lmin, int Lmax, int N0, float eps,
+           float alpha_0,float beta_0,float gamma_0, int *Nl, float *Cl,
+	   bool use_debug
+    );
+
+void regression(int, float *, float *, float &a, float &b);
+
+float mlmc_gpu(int num_levels,
+		int n_initial, float epsilon,
+		float alpha_0, float beta_0, float gamma_0,
+		int *out_samples_per_level, float *out_cost_per_level,
+		bool use_debug, bool use_timings) {
+    return mlmc(2, num_levels, n_initial, epsilon,
+		    alpha_0, beta_0, gamma_0,
+		    out_samples_per_level, out_cost_per_level,
+		    use_debug);
+}
+
 ////////////////////////////////////////////////////////////////////////
 // CUDA global constants
 ////////////////////////////////////////////////////////////////////////
 
 __constant__ int   N;
+__constant__ double T_dbl, r_dbl, sigma_dbl, rho_dbl, alpha_dbl, dt_dbl, con1_dbl, con2_dbl;
 __constant__ float T, r, sigma, rho, alpha, dt, con1, con2;
+__constant__ __half T_h, r_h, sigma_h, rho_h, alpha_h, dt_h, con1_h, con2_h;
 
 
 ////////////////////////////////////////////////////////////////////////
 // kernel routine
 ////////////////////////////////////////////////////////////////////////
 
-//TODO :: replace with half, single, and double versions.
+// Attempts to solve 2D geometric brownian motion SDE:
+//   dS_1 = r * S_1 * dt + rho * S_1 * dW_1
+//   dS_2 = r * S_2 * dt + rho * S_2 * dW_2
+// dW_1 and dW_2 are increments in two correlated brownian motions.
 
-__global__ void pathcalc(float *d_z, float *d_v)
+// This is approximated using Euler-Maruyama discretisation:
+//   S_1,N+1 = S_1,N * (1 + r*delta(T) + rho * sqrt(delta(T)) * Y_1, N
+//   S_2,N+1 = S_2,N * (1 + r*delta(T) + rho * sqrt(delta(T)) * Y_2, N
+
+// delta(T) is the timestep. Y1_N and Y2_N are Normal r.v.
+// Independent with other timesteps, but have correlation p which can be simulated by defining them as:
+//   Y_1,N = Z_1,N
+//   Y_2,N = rho * Z_1,N + sqrt(1-rho^2) * Z_2,N
+
+// Note that the more complex version mlqmc06_l uses a Milstein method of discretisation which adds another term to Euler disc.
+// Euler has stroong order of convergence sqrt(delta(t)) compared to Milsteins delta(T)
+
+//What is number of timesteps here??
+
+__global__ void pathcalc_half(float *d_z, float *d_v, float *d_v_sq)
 {
-  // Attempts to solve 2D geometric brownian motion SDE:
-  //   dS_1 = r * S_1 * dt + rho * S_1 * dW_1
-  //   dS_2 = r * S_2 * dt + rho * S_2 * dW_2
-  // dW_1 and dW_2 are increments in two correlated brownian motions. 
 
-  // This is approximated using Euler-Maruyama discretisation:
-  //   S_1,N+1 = S_1,N * (1 + r*delta(T) + rho * sqrt(delta(T)) * Y_1, N
-  //   S_2,N+1 = S_2,N * (1 + r*delta(T) + rho * sqrt(delta(T)) * Y_2, N
+  __half one = __float2half(1.0f);
+  __half point1 = __float2half(0.1f);
+  __half negpoint1 = __float2half(-0.1f);
 
-  // delta(T) is the timestep. Y1_N and Y2_N are Normal r.v.
-  // Independent with other timesteps, but have correlation p which can be simulated by defining them as:
-  //   Y_1,N = Z_1,N
-  //   Y_2,N = rho * Z_1,N + sqrt(1-rho^2) * Z_2,N
-
-  // Note that the more complex version mlqmc06_l uses a Milstein method of discretisation which adds another term to Euler disc.
-  // Euler has stroong order of convergence sqrt(delta(t)) compared to Milsteins delta(T)
-
-  float s1, s2, y1, y2, payoff;
+  __half s1, s2, y1, y2;
+  float payoff;
   int   ind;
 
   // move array pointers to correct position
@@ -54,27 +80,56 @@ __global__ void pathcalc(float *d_z, float *d_v)
   // version 1
   ind = threadIdx.x + 2*N*blockIdx.x*blockDim.x;
 
-  // version 2
-  // ind = 2*N*threadIdx.x + 2*N*blockIdx.x*blockDim.x;
-
-
   // path calculation
 
+  s1 = one;
+  s2 = s1;
+
+  for (int n=0; n<N; n++) {
+    y1   = __float2half(d_z[ind]);
+    ind += blockDim.x;      // shift pointer to next element
+
+    y2   = __hfma(__float2half(rho), y1,
+    		__half_hmul(__float2half(alpha), __float2half(d_z[ind])));
+    ind += blockDim.x;      // shift pointer to next element
+
+    s1 = __hmul(s1, (__hfma(con2, y1, con1));
+    s2 = __hmul(s2, (__hfma(con2, y2, con1));
+  }
+
+  // put payoff value into device array
+
+  payoff = 0.0f;
+  __half s1diff = __hsub2(s1, one);
+  __half s2diff = __hsub2(s2, one);
+
+  if ( 	__hgt(s1diff, negpoint1) && __hlt(s1diff, point1) &&
+		__hgt(s2diff, negpoint1) && __hlt(s2diff, point1) )
+	  payoff = exp(-r*T);
+
+  d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff;
+  d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff * payoff;
+}
+
+__global__ void pathcalc_float(float *d_z, float *d_v, float *d_v_sq)
+{
+  float s1, s2, y1, y2, payoff;
+  int   ind;
+
+  // move array pointers to correct position
+  ind = threadIdx.x + 2*N*blockIdx.x*blockDim.x;
+
+  // path calculation
   s1 = 1.0f;
   s2 = 1.0f;
 
   for (int n=0; n<N; n++) {
     y1   = d_z[ind];
-    // version 1
     ind += blockDim.x;      // shift pointer to next element
-    // version 2
-    // ind += 1; 
 
     y2   = rho*y1 + alpha*d_z[ind];
-    // version 1
     ind += blockDim.x;      // shift pointer to next element
-    // version 2
-    // ind += 1; 
+
 
     s1 = s1*(con1 + con2*y1);
     s2 = s2*(con1 + con2*y2);
@@ -86,12 +141,329 @@ __global__ void pathcalc(float *d_z, float *d_v)
   if ( fabs(s1-1.0f)<0.1f && fabs(s2-1.0f)<0.1f ) payoff = exp(-r*T);
 
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff;
+  d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff * payoff;
 }
 
+__global__ void pathcalc_double(float *d_z, float *d_v, float *d_v_sq)
+{
+  double s1, s2, y1, y2, payoff;
+  int   ind;
+
+  // move array pointers to correct position
+  ind = threadIdx.x + 2*N*blockIdx.x*blockDim.x;
+
+  // path calculation
+  s1 = 1.0;
+  s2 = 1.0;
+
+  for (int n=0; n<N; n++) {
+    y1   = d_z[ind];
+    ind += blockDim.x;      // shift pointer to next element
+
+    y2   = rho*y1 + alpha*d_z[ind];
+    ind += blockDim.x;      // shift pointer to next element
+
+    s1 = s1*(con1 + con2*y1);
+    s2 = s2*(con1 + con2*y2);
+  }
+
+  // put payoff value into device array
+
+  payoff = 0.0f;
+  if ( abs(s1-1.0)<0.1 && abs(s2-1.0)<0.1 ) payoff = exp(-r*T);
+
+  d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff;
+  d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff * payoff;
+}
+
+template <int level> pathcalc(int gsize, int samples, float *d_z, float *d_v, float *d_v_sq) {
+	if (level == 0)
+		pathcalc_half<<<samples / gsize, gsize>>>(float *d_z, float *d_v, float *d_v_sq);
+	if (level == 1)
+		pathcalc_float<<<samples / gsize, gsize>>>(float *d_z, float *d_v, float *d_v_sq);
+	if (level == 2)
+		pathcalc_double<<<samples / gsize, gsize>>>(float *d_z, float *d_v, float *d_v_sq);
+}
 
 ////////////////////////////////////////////////////////////////////////
 // Main program
 ////////////////////////////////////////////////////////////////////////
+
+int mlmc_gpu(
+	int num_levels,
+	int n_initial, float epsilon,
+	float alpha_0, float beta_0, float gamma_0,
+	int &out_samples_per_level, float &out_cost_per_level,
+	bool use_debug, bool use_timings)
+{
+
+	//Number of timesteps.
+  int h_N = 100;
+
+  double   h_T, h_r, h_sigma, h_rho, h_alpha, h_dt, h_con1, h_con2;
+
+  h_T     = 1.0;
+  h_r     = 0.05;
+  h_sigma = 0.1;
+  h_rho   = 0.5;
+  h_alpha = sqrt(1.0-h_rho*h_rho);
+  h_dt    = 1.0/ n_initial;
+  h_con1  = 1.0 + h_r*h_dt;
+  h_con2  = sqrt(h_dt)*h_sigma;
+
+  checkCudaErrors( cudaMemcpyToSymbol(N,    &h_N,    		sizeof(h_N)) );
+  checkCudaErrors( cudaMemcpyToSymbol(T_dbl,    	&h_T,    			sizeof(h_T)) );
+  checkCudaErrors( cudaMemcpyToSymbol(r_dbl,    	&h_r,    			sizeof(h_r)) );
+  checkCudaErrors( cudaMemcpyToSymbol(sigma_dbl,	&h_sigma,			sizeof(h_sigma)) );
+  checkCudaErrors( cudaMemcpyToSymbol(rho_dbl,  	&h_rho,  			sizeof(h_rho)) );
+  checkCudaErrors( cudaMemcpyToSymbol(alpha_dbl ,	&h_alpha,			sizeof(h_alpha)) );
+  checkCudaErrors( cudaMemcpyToSymbol(dt_dbl,   	&h_dt,   			sizeof(h_dt)) );
+  checkCudaErrors( cudaMemcpyToSymbol(con1_dbl, 	&h_con1, 			sizeof(h_con1)) );
+  checkCudaErrors( cudaMemcpyToSymbol(con2_dbl, 	&h_con2, 			sizeof(h_con2)) );
+
+  double sums[7], suml[3][21];
+  float  ml[21], Vl[21], NlCl[21], x[21], y[21],
+         alpha, beta, gamma, sum, theta;
+  int    dNl[21], L, converged;
+
+  int    diag = use_debug;  // diagnostics, set to 0 for none
+
+  //
+  // check input parameters
+  //
+
+  if (Lmin<2) {
+    fprintf(stderr,"error: needs Lmin >= 2 \n");
+    exit(1);
+  }
+  if (Lmax<Lmin) {
+    fprintf(stderr,"error: needs Lmax >= Lmin \n");
+    exit(1);
+  }
+
+  if (N0<=0 || eps<=0.0f) {
+    fprintf(stderr,"error: needs N>0, eps>0 \n");
+    exit(1);
+  }
+
+  //
+  // initialisation
+  //
+
+  alpha = fmax(0.0f,alpha_0);
+  beta  = fmax(0.0f,beta_0);
+  gamma = fmax(0.0f,gamma_0);
+  theta = 0.25f;             // MSE split between bias^2 and variance
+
+  L = Lmin;
+  converged = 0;
+
+  for(int l=0; l<=Lmax; l++) {
+    Nl[l]   = 0;
+    Cl[l]   = powf(2.0f,(float)l*gamma);
+    NlCl[l] = 0.0f;
+
+    for(int n=0; n<3; n++) suml[n][l] = 0.0;
+  }
+
+  for(int l=0; l<=Lmin; l++) dNl[l] = N0;
+
+  //
+  // main loop
+  //
+
+  while (!converged) {
+
+    //
+    // update sample sums
+    //
+
+    for (int l=0; l<=L; l++) {
+      if (diag) printf(" %d ",dNl[l]);
+
+      if (dNl[l]>0) {
+
+    	int num_paths = dNl[l];
+
+    	//Allocate memory
+    	h_v = (float *)malloc(sizeof(float) * num_paths);
+    	h_v_sq = (float *)malloc(sizeof(float) * num_paths);
+    	checkCudaErrors( cudaMalloc((void **)&d_v, sizeof(float)*num_paths) );
+    	checkCudaErrors( cudaMalloc((void **)&d_v_sq, sizeof(float)*num_paths) );
+    	checkCudaErrors( cudaMalloc((void **)&d_z, sizeof(float)*2*h_N*num_paths) );
+
+    	//Generate 2 * dNl[l] random samples at desired precision based on l.
+
+    	//Create desired array of required precision
+
+    	//Move into device
+
+        int grid_size = 64;
+
+        pathcalc<0>(grid_size, num_paths, d_z, d_v, d_v_sq);
+
+        //Move results out of device memory, add to array.
+
+        checkCudaErrors( cudaMemcpy(h_v, d_v, sizeof(float)*num_paths,
+                         cudaMemcpyDeviceToHost) );
+
+        checkCudaErrors( cudaMemcpy(h_v_sq, d_v_sq, sizeof(float)*num_paths,
+                         cudaMemcpyDeviceToHost) );
+
+        //reduce step
+        for (int i = 0; i < num_paths; i++) {
+        	// TODO :: What is num timesteps??
+        	sums[0] += 2;
+        	sums[1] += d_v[i];
+        	sums[2] += d_v_sq[i];
+        }
+
+        suml[0][l] += (float) num_paths;
+        suml[1][l] += sums[1];
+        suml[2][l] += sums[2];
+        NlCl[l]    += sums[0];  // sum total cost
+
+        //Free used memory
+        free(h_v);
+        free(h_v_sq);
+        checkCudaErrors( cudaFree(d_v) );
+        checkCudaErrors( cudaFree(d_v_sq) );
+        checkCudaErrors( cudaFree(d_z) );
+      }
+    }
+    if (diag) printf(" \n");
+
+    //
+    // compute absolute average, variance and cost,
+    // correct for possible under-sampling,
+    // and set optimal number of new samples
+    //
+
+    sum = 0.0f;
+
+    for (int l=0; l<=L; l++) {
+      ml[l] = fabs(suml[1][l]/suml[0][l]);
+      Vl[l] = fmaxf(suml[2][l]/suml[0][l] - ml[l]*ml[l], 0.0f);
+      if (gamma_0 <= 0.0f) Cl[l] = NlCl[l] / suml[0][l];
+
+      if (l>1) {
+        ml[l] = fmaxf(ml[l],  0.5f*ml[l-1]/powf(2.0f,alpha));
+        Vl[l] = fmaxf(Vl[l],  0.5f*Vl[l-1]/powf(2.0f,beta));
+      }
+
+      sum += sqrtf(Vl[l]*Cl[l]);
+    }
+
+    for (int l=0; l<=L; l++) {
+      dNl[l] = ceilf( fmaxf( 0.0f,
+                       sqrtf(Vl[l]/Cl[l])*sum/((1.0f-theta)*eps*eps)
+                     - suml[0][l] ) );
+    }
+
+    //
+    // use linear regression to estimate alpha, beta, gamma if not given
+    //
+
+    if (alpha_0 <= 0.0f) {
+      for (int l=1; l<=L; l++) {
+        x[l-1] = l;
+        y[l-1] = - log2f(ml[l]);
+      }
+      regression(L,x,y,alpha,sum);
+      if (diag) printf(" alpha = %f \n",alpha);
+    }
+
+    if (beta_0 <= 0.0f) {
+      for (int l=1; l<=L; l++) {
+        x[l-1] = l;
+        y[l-1] = - log2f(Vl[l]);
+      }
+      regression(L,x,y,beta,sum);
+      if (diag) printf(" beta = %f \n",beta);
+    }
+
+     if (gamma_0 <= 0.0f) {
+      for (int l=1; l<=L; l++) {
+        x[l-1] = l;
+        y[l-1] = log2f(Cl[l]);
+      }
+      regression(L,x,y,gamma,sum);
+      if (diag) printf(" gamma = %f \n",gamma);
+    }
+
+    //
+    // if (almost) converged, estimate remaining error and decide
+    // whether a new level is required
+    //
+
+    sum = 0.0;
+      for (int l=0; l<=L; l++)
+        sum += fmaxf(0.0f, (float)dNl[l]-0.01f*suml[0][l]);
+
+    if (sum==0) {
+      if (diag) printf(" achieved variance target \n");
+
+      converged = 1;
+      float rem = ml[L] / (powf(2.0f,gamma)-1.0f);
+
+      if (rem > sqrtf(theta)*eps) {
+        if (L==Lmax)
+          printf("*** failed to achieve weak convergence *** \n");
+        else {
+          converged = 0;
+          L++;
+          Vl[L] = Vl[L-1]/powf(2.0f,beta);
+          Cl[L] = Cl[L-1]*powf(2.0f,gamma);
+
+          if (diag) printf(" L = %d \n",L);
+
+          sum = 0.0f;
+          for (int l=0; l<=L; l++) sum += sqrtf(Vl[l]*Cl[l]);
+          for (int l=0; l<=L; l++)
+            dNl[l] = ceilf( fmaxf( 0.0f,
+                            sqrtf(Vl[l]/Cl[l])*sum/((1.0f-theta)*eps*eps)
+                          - suml[0][l] ) );
+        }
+      }
+    }
+  }
+
+  //
+  // finally, evaluate multilevel estimator and set outputs
+  //
+
+  float P = 0.0f;
+  for (int l=0; l<=L; l++) {
+    P    += suml[1][l]/suml[0][l];
+    Nl[l] = suml[0][l];
+    Cl[l] = NlCl[l] / Nl[l];
+  }
+
+  return P;
+}
+
+
+
+//
+// linear regression routine
+//
+
+void regression(int N, float *x, float *y, float &a, float &b){
+
+  float sum0=0.0f, sum1=0.0f, sum2=0.0f, sumy0=0.0f, sumy1=0.0f;
+
+  for (int i=0; i<N; i++) {
+    sum0  += 1.0f;
+    sum1  += x[i];
+    sum2  += x[i]*x[i];
+
+    sumy0 += y[i];
+    sumy1 += y[i]*x[i];
+  }
+
+  a = (sum0*sumy1 - sum1*sumy0) / (sum0*sum2 - sum1*sum1);
+  b = (sum2*sumy0 - sum1*sumy1) / (sum0*sum2 - sum1*sum1);
+}
 
 int main(int argc, const char **argv){
     
