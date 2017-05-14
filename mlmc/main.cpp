@@ -4,12 +4,26 @@
 #include <stdlib.h>
 #include <getopt.h>
 
-extern float mlmc(
+extern float mlmc_cpu(
+	int num_levels,
+	int n_initial, float epsilon,
+	float alpha_0, float beta_0, float gamma_0,
+	int *out_samples_per_level, float *out_cost_per_level,
+	bool use_debug, bool use_timings);
+
+extern float mlmc_gpu(
 	int num_levels,
 	int n_initial, float epsilon, 
 	float alpha_0, float beta_0, float gamma_0, 
 	int *out_samples_per_level, float *out_cost_per_level,
 	bool use_debug, bool use_timings);
+
+void run_and_print_stats(const char * run_name,
+	int num_levels,
+	int n_initial, float epsilon,
+	float alpha, float beta, float gamma,
+	bool use_debug, bool use_timings,
+	bool gpu_version, int variation);
 
 int main (int argc, char **argv) {
 
@@ -32,7 +46,7 @@ int main (int argc, char **argv) {
     while (c != -1) {
 
 		static struct option long_options[]  = {
-			{"debug", 		no_argument, &debug_flag, 1},
+			{"debug", 		no_argument, 0, 'd'},
 			{"num_levels", 	required_argument, 	&num_levels, 'l'},
 			{"num_initial", required_argument, 	&num_initial, 'i'},
 			{"epsilon", 	required_argument, 	0, 'e'},
@@ -41,6 +55,7 @@ int main (int argc, char **argv) {
 			{"gamma", 		required_argument, 	0, 'g'},
 			{"timings", 	no_argument, 		&use_timings, 1},
 			{"file", 		required_argument, 	0, 'f'},
+			{"help", no_argument, 0, 'h'},
 			{0, 0, 0, 0}
 		};
 
@@ -54,45 +69,95 @@ int main (int argc, char **argv) {
 		}
 
 		switch(c) {
-			case 'f':
-				printf("option -f with %s", optarg);
-				fp_out = optarg;
-			case 'e':
-				printf("using epsilon :%s", optarg);
-				epsilon = atof(optarg);
-			case 'l':
-				printf("using num_levels :%s", optarg);
-				num_levels = atoi(optarg);	
-			case 'i':
-				printf("using num_initial :%s", optarg);
-				num_initial = atoi(optarg);	
-			case 'a':
-				printf("using alpha :%s", optarg);
-				alpha = atoi(optarg);	
-			case 'b':
-				printf("using beta :%s", optarg);
-				beta = atoi(optarg);	
-			case 'g':
-				printf("using gamma :%s", optarg);
-				gamma = atoi(optarg);	
-			default:
-				continue;
+		    case 'h':
+			printf("Usage: \n");
+			printf("--num_levels = number of mlmc levels to use. \n");
+			printf("--num_initial = number of initial samples to use. \n");
+			printf("--epsilon = goal accuracy epsilon. \n");
+			printf("--alpha = Desired alpha parameter. \n");
+			printf("--beta = Desired beta parameter. \n");
+			printf("--gamma = Desired gamma parameter. \n");
+			printf("--timings = Flag to print timings. \n");
+			printf("--debug = Flag to print debug output. \n");
+
+			return 0;
+
+		    case 'f':
+			printf("option -f with %s\n", optarg);
+			fp_out = optarg;
+			break;
+		    case 'e':
+			printf("using epsilon :%s\n", optarg);
+			epsilon = atof(optarg);
+			break;
+		    case 'l':
+			printf("using num_levels :%s\n", optarg);
+			num_levels = atoi(optarg);	
+			break;
+		    case 'i':
+			printf("using num_initial :%s\n", optarg);
+			num_initial = atoi(optarg);	
+			break;
+		    case 'a':
+			printf("using alpha :%s\n", optarg);
+			alpha = atoi(optarg);	
+			break;
+		    case 'b':
+			printf("using beta :%s\n", optarg);
+			beta = atoi(optarg);	
+			break;
+		    case 'g':
+			printf("using gamma :%s\n", optarg);
+			gamma = atoi(optarg);	
+			break;
+		    case 'd':
+			printf("Using debug mode. \n");
+			debug_flag = 1;
+			break;
+		    default:
+			continue;
 		}
     }
 
-    printf("Hi \n");
-
-    int *p_samples_per_level_out;
-    float *p_cost_per_level_out;
-
-    //Main MLMC code
-    float val = mlmc(
-	num_levels, num_initial, epsilon,
-	alpha, beta, gamma,
-	p_samples_per_level_out,
-	p_cost_per_level_out,
-	debug_flag, use_timings);
-
+    run_and_print_stats("CPU",
+		num_levels, num_initial, epsilon,
+		alpha, beta, gamma,
+		debug_flag, use_timings,
+		true, 0);
 
     return 0;
+}
+
+//TODO :: filename
+void run_and_print_stats(
+		const char * run_name,
+		int num_levels,
+		int n_initial, float epsilon,
+		float alpha, float beta, float gamma,
+		bool use_debug, bool use_timings,
+		bool gpu_version, int variation) {
+
+    printf("Running %s: \n", run_name);
+    int *p_samples_per_level_out = (int *)malloc((num_levels+1)*sizeof(int));
+    float *p_cost_per_level_out = (float *)malloc((num_levels+1)*sizeof(float));
+
+    float val;
+
+    if (!gpu_version) {
+    	//Run the CPU version this project is based off
+    	 val = mlmc_cpu(
+			num_levels, n_initial, epsilon,
+			alpha, beta, gamma,
+			p_samples_per_level_out,
+			p_cost_per_level_out,
+			use_debug, use_timings);
+    } else {
+    	//val = mlmc_gpu
+    }
+
+    for (int i = 0; i < num_levels; i++) {
+    	printf("Level %d: Num samples - %d, Cost - %f \n", i,
+    			p_cost_per_level_out[i], p_samples_per_level_out[i]);
+    }
+
 }

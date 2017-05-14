@@ -1,5 +1,7 @@
 #include "mrg32k3a.h"
 
+//A CPU version of the path simulation using a Milstein discretisation.
+
 // TODO :: defines option type. For now, keep constant
 const int option = 1;
 

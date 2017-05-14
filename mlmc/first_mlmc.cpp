@@ -36,17 +36,36 @@
 
 extern void mcqmc06_l(int l, int N, double *sums); 
 
+float mlmc(int Lmin, int Lmax, int N0, float eps,
+           float alpha_0,float beta_0,float gamma_0, int *Nl, float *Cl,
+	   bool use_debug
+    );
+
 void regression(int, float *, float *, float &a, float &b);
 
+float mlmc_cpu(int num_levels,
+		int n_initial, float epsilon,
+		float alpha_0, float beta_0, float gamma_0,
+		int *out_samples_per_level, float *out_cost_per_level,
+		bool use_debug, bool use_timings) {
+    return mlmc(2, num_levels, n_initial, epsilon,
+		    alpha_0, beta_0, gamma_0,
+		    out_samples_per_level, out_cost_per_level, 
+		    use_debug);
+}
+
+
 float mlmc(int Lmin, int Lmax, int N0, float eps,
-           float alpha_0,float beta_0,float gamma_0, int *Nl, float *Cl) {
+           float alpha_0,float beta_0,float gamma_0, int *Nl, float *Cl, 
+	   bool use_debug
+) {
 
   double sums[7], suml[3][21];
   float  ml[21], Vl[21], NlCl[21], x[21], y[21],
          alpha, beta, gamma, sum, theta;
   int    dNl[21], L, converged;
 
-  int    diag = 0;  // diagnostics, set to 0 for none 
+  int    diag = use_debug;  // diagnostics, set to 0 for none 
 
   //
   // check input parameters
