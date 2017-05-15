@@ -10,13 +10,13 @@ all:	mlmc
 main.o:	main.cpp Makefile
 	g++ -c -fPIC -o main.o main.cpp
 
-mlmc_gpu.o:	mlmc.cu Makefile
-	nvcc monte_carlo.cu mlmc_first.cu -c -o mlmc_gpu.o $(INC) $(NVCCFLAGS) $(LIB)	
+mlmc_gpu.o: mlmc_first.cu Makefile
+	nvcc mlmc_first.cu -c -o mlmc_gpu.o $(INC) $(NVCCFLAGS) $(LIB)	
 
 mlmc.o:	first_mlmc.cpp Makefile
 	g++ -c -fPIC first_mlmc.cpp mlmc_cpu_estimator.cpp
 
-mlmc:	main.o mlmc.o Makefile
+mlmc:	main.o mlmc.o mlmc_gpu.o Makefile
 	g++ -fPIC -o mlmc *.o $(LIB)
 
 clean:

@@ -99,12 +99,15 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
 
   for(int l=0; l<=Lmax; l++) {
     Nl[l]   = 0;
+
+    //Cost is exponential by 2 ^^ level * gamma. Is this the case for precision?
     Cl[l]   = powf(2.0f,(float)l*gamma);
     NlCl[l] = 0.0f;
 
     for(int n=0; n<3; n++) suml[n][l] = 0.0;
   }
 
+  //Number of samples is initially N0.
   for(int l=0; l<=Lmin; l++) dNl[l] = N0;
 
   //
@@ -121,7 +124,7 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
       if (diag) printf(" %d ",dNl[l]);
 
       if (dNl[l]>0) {
-
+    	//Run the estimation at desired accuracy.
 
         mcqmc06_l(l,dNl[l],sums);
 
@@ -129,7 +132,8 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
         suml[0][l] += (float) dNl[l];
         suml[1][l] += sums[1];
         suml[2][l] += sums[2];
-        NlCl[l]    += sums[0];  // sum total cost
+        NlCl[l]    += sums[0];
+        // sum total cost. cost is given as exponential in level number.
       }
     }
     if (diag) printf(" \n");
@@ -143,18 +147,29 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
     sum = 0.0f;
 
     for (int l=0; l<=L; l++) {
+      //Expectation at level l : sum(paths of Y) / number of paths in Y
       ml[l] = fabs(suml[1][l]/suml[0][l]);
+
+      //Variance at level l :
+      //	sum (paths of Y sq) / num paths
+      //	- Expectation squared. if -ve, set to 0.
       Vl[l] = fmaxf(suml[2][l]/suml[0][l] - ml[l]*ml[l], 0.0f);
+
+      // If gamma 0 - estimate as average cost.
       if (gamma_0 <= 0.0f) Cl[l] = NlCl[l] / suml[0][l];
 
+      //estimates for m_l and v_l not allowed to decrease by more than half
+      //of anticipated value.
       if (l>1) {
         ml[l] = fmaxf(ml[l],  0.5f*ml[l-1]/powf(2.0f,alpha));
         Vl[l] = fmaxf(Vl[l],  0.5f*Vl[l-1]/powf(2.0f,beta));
       }
 
+      //Thm 1.1 : C = eps ^ - 2 * [sum of sqrt(v_l * C_l)] ^ 2
       sum += sqrtf(Vl[l]*Cl[l]);
     }
 
+    //Now update the number of samples for each level.
     for (int l=0; l<=L; l++) {
       dNl[l] = ceilf( fmaxf( 0.0f, 
                        sqrtf(Vl[l]/Cl[l])*sum/((1.0f-theta)*eps*eps)
@@ -198,8 +213,8 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
     //
 
     sum = 0.0;
-      for (int l=0; l<=L; l++)
-        sum += fmaxf(0.0f, (float)dNl[l]-0.01f*suml[0][l]);
+    for (int l=0; l<=L; l++)
+      sum += fmaxf(0.0f, (float)dNl[l]-0.01f*suml[0][l]);
 
     if (sum==0) {
       if (diag) printf(" achieved variance target \n");
@@ -207,12 +222,17 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
       converged = 1;
       float rem = ml[L] / (powf(2.0f,gamma)-1.0f);
 
+      //Convergence test
       if (rem > sqrtf(theta)*eps) {
         if (L==Lmax)
           printf("*** failed to achieve weak convergence *** \n");
         else {
+
+          //Introduce new level.
           converged = 0;
           L++;
+
+          //Estimate new variance and cost for next level
           Vl[L] = Vl[L-1]/powf(2.0f,beta);
           Cl[L] = Cl[L-1]*powf(2.0f,gamma);
 
@@ -235,6 +255,7 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
 
   float P = 0.0f;
   for (int l=0; l<=L; l++) {
+	//Average each pay off at each level.
     P    += suml[1][l]/suml[0][l];
     Nl[l] = suml[0][l];
     Cl[l] = NlCl[l] / Nl[l];

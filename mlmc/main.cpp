@@ -18,6 +18,13 @@ extern float mlmc_gpu(
 	int *out_samples_per_level, float *out_cost_per_level,
 	bool use_debug, bool use_timings);
 
+extern int monte_carlo_gpu(
+	int num_levels,
+	int n_initial, float epsilon,
+	float alpha_0, float beta_0, float gamma_0,
+	int &out_samples_per_level, float &out_cost_per_level,
+	bool use_debug, bool use_timings);
+
 void run_and_print_stats(const char * run_name,
 	int num_levels,
 	int n_initial, float epsilon,
@@ -70,58 +77,66 @@ int main (int argc, char **argv) {
 
 		switch(c) {
 		    case 'h':
-			printf("Usage: \n");
-			printf("--num_levels = number of mlmc levels to use. \n");
-			printf("--num_initial = number of initial samples to use. \n");
-			printf("--epsilon = goal accuracy epsilon. \n");
-			printf("--alpha = Desired alpha parameter. \n");
-			printf("--beta = Desired beta parameter. \n");
-			printf("--gamma = Desired gamma parameter. \n");
-			printf("--timings = Flag to print timings. \n");
-			printf("--debug = Flag to print debug output. \n");
+				printf("Usage: \n");
+				printf("--num_levels = number of mlmc levels to use. \n");
+				printf("--num_initial = number of initial samples to use. \n");
+				printf("--epsilon = goal accuracy epsilon. \n");
+				printf("--alpha = Desired alpha parameter. \n");
+				printf("--beta = Desired beta parameter. \n");
+				printf("--gamma = Desired gamma parameter. \n");
+				printf("--timings = Flag to print timings. \n");
+				printf("--debug = Flag to print debug output. \n");
 
-			return 0;
+				return 0;
 
 		    case 'f':
-			printf("option -f with %s\n", optarg);
-			fp_out = optarg;
-			break;
+				printf("option -f with %s\n", optarg);
+				fp_out = optarg;
+				break;
 		    case 'e':
-			printf("using epsilon :%s\n", optarg);
-			epsilon = atof(optarg);
-			break;
+				printf("using epsilon :%s\n", optarg);
+				epsilon = atof(optarg);
+				break;
 		    case 'l':
-			printf("using num_levels :%s\n", optarg);
-			num_levels = atoi(optarg);	
-			break;
+				printf("using num_levels :%s\n", optarg);
+				num_levels = atoi(optarg);
+				break;
 		    case 'i':
-			printf("using num_initial :%s\n", optarg);
-			num_initial = atoi(optarg);	
-			break;
+				printf("using num_initial :%s\n", optarg);
+				num_initial = atoi(optarg);
+				break;
 		    case 'a':
-			printf("using alpha :%s\n", optarg);
-			alpha = atof(optarg);	
-			break;
+				printf("using alpha :%s\n", optarg);
+				alpha = atof(optarg);
+				break;
 		    case 'b':
-			printf("using beta :%s\n", optarg);
-			beta = atof(optarg);	
-			break;
+				printf("using beta :%s\n", optarg);
+				beta = atof(optarg);
+				break;
 		    case 'g':
-			printf("using gamma :%s\n", optarg);
-			gamma = atof(optarg);	
-			break;
+				printf("using gamma :%s\n", optarg);
+				gamma = atof(optarg);
+				break;
 		    case 'd':
-			printf("Using debug mode. \n");
-			debug_flag = 1;
-			break;
+				printf("Using debug mode. \n");
+				debug_flag = 1;
+				break;
 		    default:
-			continue;
+		    	continue;
 		}
     }
 
     bool gpu_version = false;
 
     run_and_print_stats("CPU",
+		num_levels, num_initial, epsilon,
+		alpha, beta, gamma,
+		debug_flag, use_timings,
+		gpu_version, 0);
+
+    gpu_version = true;
+
+    run_and_print_stats("GPU",
 		num_levels, num_initial, epsilon,
 		alpha, beta, gamma,
 		debug_flag, use_timings,
@@ -159,7 +174,13 @@ void run_and_print_stats(
 			p_cost_per_level_out,
 			use_debug, use_timings);
     } else {
-    	//val = mlmc_gpu
+    	//Run the GPU version. Switch based on variant.
+		 val = mlmc_gpu(
+				num_levels, n_initial, epsilon,
+				alpha, beta, gamma,
+				p_samples_per_level_out,
+				p_cost_per_level_out,
+				use_debug, use_timings);
     }
 
     for (int i = 0; i < num_levels; i++) {

@@ -11,6 +11,10 @@
 #include <cuda.h>
 #include <curand.h>
 
+#if __CUDA_ARCH__ >= 530
+#include <cuda_fp16.h>
+#endif
+
 #include <helper_cuda.h>
 
 float mlmc(int Lmin, int Lmax, int N0, float eps,
@@ -21,25 +25,19 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
 void regression(int, float *, float *, float &a, float &b);
 
 float mlmc_gpu(int num_levels,
-		int n_initial, float epsilon,
-		float alpha_0, float beta_0, float gamma_0,
-		int *out_samples_per_level, float *out_cost_per_level,
-		bool use_debug, bool use_timings) {
-    return mlmc(2, num_levels, n_initial, epsilon,
-		    alpha_0, beta_0, gamma_0,
-		    out_samples_per_level, out_cost_per_level,
-		    use_debug);
-}
+	       int n_initial, float epsilon,
+	       float alpha_0, float beta_0, float gamma_0,
+	       int *out_samples_per_level, float *out_cost_per_level,
+	       bool use_debug, bool use_timings);
 
 ////////////////////////////////////////////////////////////////////////
 // CUDA global constants
 ////////////////////////////////////////////////////////////////////////
 
 __constant__ int   N;
+// Store double constants and replace with kernel casts
 __constant__ double T_dbl, r_dbl, sigma_dbl, rho_dbl, alpha_dbl, dt_dbl, con1_dbl, con2_dbl;
 __constant__ float T, r, sigma, rho, alpha, dt, con1, con2;
-__constant__ __half T_h, r_h, sigma_h, rho_h, alpha_h, dt_h, con1_h, con2_h;
-
 
 ////////////////////////////////////////////////////////////////////////
 // kernel routine
@@ -62,9 +60,8 @@ __constant__ __half T_h, r_h, sigma_h, rho_h, alpha_h, dt_h, con1_h, con2_h;
 // Note that the more complex version mlqmc06_l uses a Milstein method of discretisation which adds another term to Euler disc.
 // Euler has stroong order of convergence sqrt(delta(t)) compared to Milsteins delta(T)
 
-//What is number of timesteps here??
-
-__global__ void pathcalc_half(float *d_z, float *d_v, float *d_v_sq)
+#if __CUDA_ARCH__ >= 530
+__global__ void pathcalc_half(float *d_z, double *d_v, double *d_v_sq)
 {
 
   __half one = __float2half(1.0f);
@@ -110,8 +107,11 @@ __global__ void pathcalc_half(float *d_z, float *d_v, float *d_v_sq)
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff;
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff * payoff;
 }
+#else 
+#define pathcalc_half pathcalc_float
+#endif
 
-__global__ void pathcalc_float(float *d_z, float *d_v, float *d_v_sq)
+__global__ void pathcalc_float(float *d_z, double *d_v, double *d_v_sq)
 {
   float s1, s2, y1, y2, payoff;
   int   ind;
@@ -144,7 +144,7 @@ __global__ void pathcalc_float(float *d_z, float *d_v, float *d_v_sq)
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff * payoff;
 }
 
-__global__ void pathcalc_double(float *d_z, float *d_v, float *d_v_sq)
+__global__ void pathcalc_double(float *d_z, double *d_v, double *d_v_sq)
 {
   double s1, s2, y1, y2, payoff;
   int   ind;
@@ -176,7 +176,7 @@ __global__ void pathcalc_double(float *d_z, float *d_v, float *d_v_sq)
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff * payoff;
 }
 
-template <int level> pathcalc(int gsize, int samples, float *d_z, float *d_v, float *d_v_sq) {
+void pathcalc(int level, int gsize, int samples, float *d_z, double *d_v, double *d_v_sq) {
 	if (level == 0)
 		pathcalc_half<<<samples / gsize, gsize>>>(float *d_z, float *d_v, float *d_v_sq);
 	if (level == 1)
@@ -189,15 +189,25 @@ template <int level> pathcalc(int gsize, int samples, float *d_z, float *d_v, fl
 // Main program
 ////////////////////////////////////////////////////////////////////////
 
-int mlmc_gpu(
+float mlmc_gpu(
 	int num_levels,
-	int n_initial, float epsilon,
+	int n_initial, float eps,
 	float alpha_0, float beta_0, float gamma_0,
-	int &out_samples_per_level, float &out_cost_per_level,
+	int *out_samples_per_level, float *out_cost_per_level,
 	bool use_debug, bool use_timings)
 {
+    int *Nl = out_samples_per_level;
+    float *Cl = out_cost_per_level;
 
-	//Number of timesteps.
+  if (use_debug) {
+	  printf("CUDA multi-level monte carlo variant 1\n");
+  }
+
+  //This variant sets LMin and LMax set to be 2.
+  int Lmin = 2;
+  int Lmax = 2;
+
+  //Number of timesteps.
   int h_N = 100;
 
   double   h_T, h_r, h_sigma, h_rho, h_alpha, h_dt, h_con1, h_con2;
@@ -211,7 +221,7 @@ int mlmc_gpu(
   h_con1  = 1.0 + h_r*h_dt;
   h_con2  = sqrt(h_dt)*h_sigma;
 
-  checkCudaErrors( cudaMemcpyToSymbol(N,    &h_N,    		sizeof(h_N)) );
+  checkCudaErrors( cudaMemcpyToSymbol(N,                &h_N,                           sizeof(h_N)) );
   checkCudaErrors( cudaMemcpyToSymbol(T_dbl,    	&h_T,    			sizeof(h_T)) );
   checkCudaErrors( cudaMemcpyToSymbol(r_dbl,    	&h_r,    			sizeof(h_r)) );
   checkCudaErrors( cudaMemcpyToSymbol(sigma_dbl,	&h_sigma,			sizeof(h_sigma)) );
@@ -232,17 +242,8 @@ int mlmc_gpu(
   // check input parameters
   //
 
-  if (Lmin<2) {
-    fprintf(stderr,"error: needs Lmin >= 2 \n");
-    exit(1);
-  }
-  if (Lmax<Lmin) {
-    fprintf(stderr,"error: needs Lmax >= Lmin \n");
-    exit(1);
-  }
-
-  if (N0<=0 || eps<=0.0f) {
-    fprintf(stderr,"error: needs N>0, eps>0 \n");
+  if (num_levels < 1) {
+    fprintf(stderr,"error: needs num_levels >= 1 \n");
     exit(1);
   }
 
@@ -266,7 +267,7 @@ int mlmc_gpu(
     for(int n=0; n<3; n++) suml[n][l] = 0.0;
   }
 
-  for(int l=0; l<=Lmin; l++) dNl[l] = N0;
+  for(int l=0; l<=Lmin; l++) dNl[l] = n_initial;
 
   //
   // main loop
@@ -285,11 +286,15 @@ int mlmc_gpu(
 
     	int num_paths = dNl[l];
 
+    	double *h_v, *d_v;
+    	double *h_v_sq, *d_v_sq;
+    	float *h_z, *d_z;
+
     	//Allocate memory
-    	h_v = (float *)malloc(sizeof(float) * num_paths);
-    	h_v_sq = (float *)malloc(sizeof(float) * num_paths);
-    	checkCudaErrors( cudaMalloc((void **)&d_v, sizeof(float)*num_paths) );
-    	checkCudaErrors( cudaMalloc((void **)&d_v_sq, sizeof(float)*num_paths) );
+    	h_v = (double *)malloc(sizeof(double) * num_paths);
+    	h_v_sq = (double *)malloc(sizeof(double) * num_paths);
+    	checkCudaErrors( cudaMalloc((void **)&d_v, sizeof(double)*num_paths) );
+    	checkCudaErrors( cudaMalloc((void **)&d_v_sq, sizeof(double)*num_paths) );
     	checkCudaErrors( cudaMalloc((void **)&d_z, sizeof(float)*2*h_N*num_paths) );
 
     	//Generate 2 * dNl[l] random samples at desired precision based on l.
@@ -300,7 +305,7 @@ int mlmc_gpu(
 
         int grid_size = 64;
 
-        pathcalc<0>(grid_size, num_paths, d_z, d_v, d_v_sq);
+        pathcalc(1, grid_size, num_paths, d_z, d_v, d_v_sq);
 
         //Move results out of device memory, add to array.
 
@@ -436,7 +441,7 @@ int mlmc_gpu(
   for (int l=0; l<=L; l++) {
     P    += suml[1][l]/suml[0][l];
     Nl[l] = suml[0][l];
-    Cl[l] = NlCl[l] / Nl[l];
+    Cl[l] = NlCl[l] / Cl[l];
   }
 
   return P;
@@ -531,7 +536,7 @@ int main(int argc, const char **argv){
 
   cudaEventRecord(start);
 
-  pathcalc<<<NPATH/64, 64>>>(d_z, d_v);
+  //pathcalc<<<NPATH/64, 64>>>(d_z, d_v);
   getLastCudaError("pathcalc execution failed\n");
 
   cudaEventRecord(stop);
