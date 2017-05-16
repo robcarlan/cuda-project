@@ -41,7 +41,7 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
 	   bool use_debug
     );
 
-void regression(int, float *, float *, float &a, float &b);
+extern void regression(int, float *, float *, float &a, float &b);
 
 float mlmc_cpu(int num_levels,
 		int n_initial, float epsilon,
@@ -270,19 +270,19 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
 // linear regression routine
 //
 
-void regression(int N, float *x, float *y, float &a, float &b){
+// void regression(int N, float *x, float *y, float &a, float &b){
 
-  float sum0=0.0f, sum1=0.0f, sum2=0.0f, sumy0=0.0f, sumy1=0.0f;
+//   float sum0=0.0f, sum1=0.0f, sum2=0.0f, sumy0=0.0f, sumy1=0.0f;
 
-  for (int i=0; i<N; i++) {
-    sum0  += 1.0f;
-    sum1  += x[i];
-    sum2  += x[i]*x[i];
+//   for (int i=0; i<N; i++) {
+//     sum0  += 1.0f;
+//     sum1  += x[i];
+//     sum2  += x[i]*x[i];
 
-    sumy0 += y[i];
-    sumy1 += y[i]*x[i];
-  }
+//     sumy0 += y[i];
+//     sumy1 += y[i]*x[i];
+//   }
 
-  a = (sum0*sumy1 - sum1*sumy0) / (sum0*sum2 - sum1*sum1);
-  b = (sum2*sumy0 - sum1*sumy1) / (sum0*sum2 - sum1*sum1);
-}
+//   a = (sum0*sumy1 - sum1*sumy0) / (sum0*sum2 - sum1*sum1);
+//   b = (sum2*sumy0 - sum1*sumy1) / (sum0*sum2 - sum1*sum1);
+// }

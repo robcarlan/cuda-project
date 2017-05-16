@@ -178,11 +178,11 @@ __global__ void pathcalc_double(float *d_z, double *d_v, double *d_v_sq)
 
 void pathcalc(int level, int gsize, int samples, float *d_z, double *d_v, double *d_v_sq) {
 	if (level == 0)
-		pathcalc_half<<<samples / gsize, gsize>>>(float *d_z, float *d_v, float *d_v_sq);
+		pathcalc_half<<<samples / gsize, gsize>>>(d_z, d_v, d_v_sq);
 	if (level == 1)
-		pathcalc_float<<<samples / gsize, gsize>>>(float *d_z, float *d_v, float *d_v_sq);
+		pathcalc_float<<<samples / gsize, gsize>>>(d_z, d_v, d_v_sq);
 	if (level == 2)
-		pathcalc_double<<<samples / gsize, gsize>>>(float *d_z, float *d_v, float *d_v_sq);
+		pathcalc_double<<<samples / gsize, gsize>>>(d_z, d_v, d_v_sq);
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -470,6 +470,8 @@ void regression(int N, float *x, float *y, float &a, float &b){
   b = (sum2*sumy0 - sum1*sumy1) / (sum0*sum2 - sum1*sum1);
 }
 
+/*
+
 int main(int argc, const char **argv){
     
   int     NPATH=960000, h_N=100;
@@ -577,3 +579,5 @@ int main(int argc, const char **argv){
   cudaDeviceReset();
 
 }
+
+*/

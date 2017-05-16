@@ -145,7 +145,6 @@ int main (int argc, char **argv) {
     return 0;
 }
 
-//TODO :: filename
 void run_and_print_stats(
 		const char * run_name,
 		int num_levels,
