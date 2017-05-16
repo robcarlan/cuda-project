@@ -19,7 +19,7 @@
 
 float mlmc(int Lmin, int Lmax, int N0, float eps,
            float alpha_0,float beta_0,float gamma_0, int *Nl, float *Cl,
-	   bool use_debug
+	   int use_debug
     );
 
 void regression(int, float *, float *, float &a, float &b);
@@ -28,7 +28,7 @@ float mlmc_gpu(int num_levels,
 	       int n_initial, float epsilon,
 	       float alpha_0, float beta_0, float gamma_0,
 	       int *out_samples_per_level, float *out_cost_per_level,
-	       bool use_debug, bool use_timings);
+	       int debug_level, bool use_timings);
 
 ////////////////////////////////////////////////////////////////////////
 // CUDA global constants
@@ -37,7 +37,6 @@ float mlmc_gpu(int num_levels,
 __constant__ int   N;
 // Store double constants and replace with kernel casts
 __constant__ double T_dbl, r_dbl, sigma_dbl, rho_dbl, alpha_dbl, dt_dbl, con1_dbl, con2_dbl;
-__constant__ float T, r, sigma, rho, alpha, dt, con1, con2;
 
 ////////////////////////////////////////////////////////////////////////
 // kernel routine
@@ -86,12 +85,12 @@ __global__ void pathcalc_half(float *d_z, double *d_v, double *d_v_sq)
     y1   = __float2half(d_z[ind]);
     ind += blockDim.x;      // shift pointer to next element
 
-    y2   = __hfma(__float2half(rho), y1,
-    		__half_hmul(__float2half(alpha), __float2half(d_z[ind])));
+    y2   = __hfma(__float2half((float)rho_dbl), y1,
+		  __half_hmul(__float2half((float)alpha_dbl), __float2half(d_z[ind])));
     ind += blockDim.x;      // shift pointer to next element
 
-    s1 = __hmul(s1, (__hfma(con2, y1, con1));
-    s2 = __hmul(s2, (__hfma(con2, y2, con1));
+    s1 = __hmul(s1, (__hfma(con2_dbl, y1, con1_dbl));
+    s2 = __hmul(s2, (__hfma(con2_dbl, y2, con1_dbl));
   }
 
   // put payoff value into device array
@@ -102,7 +101,7 @@ __global__ void pathcalc_half(float *d_z, double *d_v, double *d_v_sq)
 
   if ( 	__hgt(s1diff, negpoint1) && __hlt(s1diff, point1) &&
 		__hgt(s2diff, negpoint1) && __hlt(s2diff, point1) )
-	  payoff = exp(-r*T);
+	  payoff = exp(-r_dbl*T_dbl);
 
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff;
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff * payoff;
@@ -127,18 +126,18 @@ __global__ void pathcalc_float(float *d_z, double *d_v, double *d_v_sq)
     y1   = d_z[ind];
     ind += blockDim.x;      // shift pointer to next element
 
-    y2   = rho*y1 + alpha*d_z[ind];
+    y2   = rho_dbl *y1 + alpha_dbl * d_z[ind];
     ind += blockDim.x;      // shift pointer to next element
 
 
-    s1 = s1*(con1 + con2*y1);
-    s2 = s2*(con1 + con2*y2);
+    s1 = s1*(con1_dbl + con2_dbl *y1);
+    s2 = s2*(con1_dbl + con2_dbl *y2);
   }
 
   // put payoff value into device array
 
   payoff = 0.0f;
-  if ( fabs(s1-1.0f)<0.1f && fabs(s2-1.0f)<0.1f ) payoff = exp(-r*T);
+  if ( fabs(s1-1.0f)<0.1f && fabs(s2-1.0f)<0.1f ) payoff = exp(-r_dbl * T_dbl);
 
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff;
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff * payoff;
@@ -160,17 +159,17 @@ __global__ void pathcalc_double(float *d_z, double *d_v, double *d_v_sq)
     y1   = d_z[ind];
     ind += blockDim.x;      // shift pointer to next element
 
-    y2   = rho*y1 + alpha*d_z[ind];
+    y2   = rho_dbl *y1 + alpha_dbl *d_z[ind];
     ind += blockDim.x;      // shift pointer to next element
 
-    s1 = s1*(con1 + con2*y1);
-    s2 = s2*(con1 + con2*y2);
+    s1 = s1*(con1_dbl + con2_dbl *y1);
+    s2 = s2*(con1_dbl + con2_dbl *y2);
   }
 
   // put payoff value into device array
 
   payoff = 0.0f;
-  if ( abs(s1-1.0)<0.1 && abs(s2-1.0)<0.1 ) payoff = exp(-r*T);
+  if ( abs(s1-1.0)<0.1 && abs(s2-1.0)<0.1 ) payoff = exp(-r_dbl * T_dbl);
 
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff;
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff * payoff;
@@ -194,13 +193,18 @@ float mlmc_gpu(
 	int n_initial, float eps,
 	float alpha_0, float beta_0, float gamma_0,
 	int *out_samples_per_level, float *out_cost_per_level,
-	bool use_debug, bool use_timings)
+	int debug_level, bool use_timings)
 {
     int *Nl = out_samples_per_level;
     float *Cl = out_cost_per_level;
 
-  if (use_debug) {
-	  printf("CUDA multi-level monte carlo variant 1\n");
+  if (debug_level) {
+      printf("CUDA multi-level monte carlo variant 1\n");
+#if __CUDA_ARCH__ >= 530
+      printf("(CUDA half precision enabled...)\n");
+#else
+      printf("(CUDA half precision NOT enabled...)\n");
+#endif
   }
 
   //This variant sets LMin and LMax set to be 2.
@@ -236,8 +240,8 @@ float mlmc_gpu(
          alpha, beta, gamma, sum, theta;
   int    dNl[21], L, converged;
 
-  int    diag = use_debug;  // diagnostics, set to 0 for none
-
+  int    diag = debug_level;  // diagnostics, set to 0 for none
+  
   //
   // check input parameters
   //
@@ -250,6 +254,16 @@ float mlmc_gpu(
   //
   // initialisation
   //
+
+  // initialise CUDA timing
+
+  float milli;
+  cudaEvent_t start, stop;
+
+  if (use_timings) {
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+  }
 
   alpha = fmax(0.0f,alpha_0);
   beta  = fmax(0.0f,beta_0);
@@ -268,6 +282,9 @@ float mlmc_gpu(
   }
 
   for(int l=0; l<=Lmin; l++) dNl[l] = n_initial;
+
+  if (diag > 1)
+      printf("Initialised - entering main loop.\n");
 
   //
   // main loop
@@ -297,7 +314,27 @@ float mlmc_gpu(
     	checkCudaErrors( cudaMalloc((void **)&d_v_sq, sizeof(double)*num_paths) );
     	checkCudaErrors( cudaMalloc((void **)&d_z, sizeof(float)*2*h_N*num_paths) );
 
+	if (debug_level)
+	    printf("memory initialised level %d\n", l);
+
     	//Generate 2 * dNl[l] random samples at desired precision based on l.
+	if (use_timings)
+	    cudaEventRecord(start);
+
+	curandGenerator_t gen;
+	checkCudaErrors( curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT) );
+	checkCudaErrors( curandSetPseudoRandomGeneratorSeed(gen, 1234ULL) );
+	checkCudaErrors( curandGenerateNormal(gen, d_z, 2*h_N*num_paths, 0.0f, 1.0f) );
+ 
+	if (use_timings) {
+	    cudaEventRecord(stop);
+	    cudaEventSynchronize(stop);
+	    cudaEventElapsedTime(&milli, start, stop);
+
+	    printf("CURAND normal RNG  execution time (ms): %f,  samples/sec: %e \n",
+		   milli, 2.0*h_N*num_paths/(0.001*milli));
+	}
+ 
 
     	//Create desired array of required precision
 
@@ -305,23 +342,39 @@ float mlmc_gpu(
 
         int grid_size = 64;
 
-        pathcalc(1, grid_size, num_paths, d_z, d_v, d_v_sq);
+	if (debug_level)
+	    printf("Runing kernel level %d grid_size %d num_paths %d\n", l, grid_size, num_paths);
+
+	pathcalc(2, grid_size, num_paths, d_z, d_v, d_v_sq);
+
+	if (debug_level)
+	    printf("path calc level %d\n", l);
 
         //Move results out of device memory, add to array.
 
-        checkCudaErrors( cudaMemcpy(h_v, d_v, sizeof(float)*num_paths,
+        checkCudaErrors( cudaMemcpy(h_v, d_v, sizeof(double)*num_paths,
                          cudaMemcpyDeviceToHost) );
 
-        checkCudaErrors( cudaMemcpy(h_v_sq, d_v_sq, sizeof(float)*num_paths,
+        checkCudaErrors( cudaMemcpy(h_v_sq, d_v_sq, sizeof(double)*num_paths,
                          cudaMemcpyDeviceToHost) );
+
+	if (debug_level)
+	    printf("reduce step\n");
 
         //reduce step
         for (int i = 0; i < num_paths; i++) {
-        	// TODO :: What is num timesteps??
-        	sums[0] += 2;
-        	sums[1] += d_v[i];
-        	sums[2] += d_v_sq[i];
+        	// Number of timestep is 2^bit precision
+        	sums[0] += 1 << l;
+		
+		if (diag > 2 && i < 25)
+		    printf("[%d,%d] - %.4f - %.4f", l, i, h_v[i], h_v_sq[i]);
+		
+        	sums[1] += h_v[i];
+        	sums[2] += h_v_sq[i];
         }
+
+	if (debug_level)
+	    printf("reduce completed \n");
 
         suml[0][l] += (float) num_paths;
         suml[1][l] += sums[1];
@@ -359,11 +412,24 @@ float mlmc_gpu(
       sum += sqrtf(Vl[l]*Cl[l]);
     }
 
+    if (diag > 1) {
+	printf("Next level samples: ");
+    }
+    
+    //Now update the number of samples for each level.
     for (int l=0; l<=L; l++) {
       dNl[l] = ceilf( fmaxf( 0.0f,
                        sqrtf(Vl[l]/Cl[l])*sum/((1.0f-theta)*eps*eps)
                      - suml[0][l] ) );
+      if (diag > 1) {
+	  printf(" level %d - %d", l, dNl[l]);
+      }
     }
+   
+    if (diag > 1) {
+	printf("\n");
+    }
+ 
 
     //
     // use linear regression to estimate alpha, beta, gamma if not given

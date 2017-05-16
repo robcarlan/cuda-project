@@ -169,11 +169,22 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
       sum += sqrtf(Vl[l]*Cl[l]);
     }
 
+    if (diag > 1) {
+	printf("Next level samples: ");
+    }
+    
     //Now update the number of samples for each level.
     for (int l=0; l<=L; l++) {
       dNl[l] = ceilf( fmaxf( 0.0f, 
                        sqrtf(Vl[l]/Cl[l])*sum/((1.0f-theta)*eps*eps)
                      - suml[0][l] ) );
+      if (diag > 1) {
+	  printf(" level %d - %d", l, dNl[l]);
+      }
+    }
+
+    if (diag > 1) {
+	printf("\n");
     }
  
     //
