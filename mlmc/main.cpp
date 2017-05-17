@@ -1,22 +1,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
+#include <chrono>
+#include <iostream>
 
-extern float mlmc_cpu(
+float mlmc_cpu(
     int num_levels,
     int n_initial, float epsilon,
     float alpha_0, float beta_0, float gamma_0,
     int *out_samples_per_level, float *out_cost_per_level,
     bool use_debug, bool use_timings);
 
-extern float mlmc_gpu(
+float mlmc_gpu(
     int num_levels,
     int n_initial, float epsilon, 
     float alpha_0, float beta_0, float gamma_0, 
     int *out_samples_per_level, float *out_cost_per_level,
-    int use_debug, bool use_timings);
+    int use_debug, bool use_timings, 
+	bool gpu_reduce, bool milstein);
 
-extern float monte_carlo_gpu(
+float monte_carlo_gpu(
     int num_levels,
     int n_initial, float epsilon,
     float alpha_0, float beta_0, float gamma_0,
@@ -32,6 +35,8 @@ void run_and_print_stats(
     bool gpu_version, int variation);
 
 int main (int argc, char **argv) {
+	
+	std::cout << "HI" << std::endl;
 
     int c;
 
@@ -48,6 +53,11 @@ int main (int argc, char **argv) {
 	
     char *fp_out = 0;
 
+    int use_cpu = 0;
+    int use_gpu1 = 0;
+    int use_gpu2 = 0;
+	 int use_gpu3 = 0;
+
     //Option parser
     while (c != -1) {
 
@@ -61,6 +71,12 @@ int main (int argc, char **argv) {
 	    {"gamma", 		required_argument, 	0, 'g'},
 	    {"timings", 	no_argument, 		&use_timings, 1},
 	    {"file", 		required_argument, 	0, 'f'},
+	    //Which test to run
+		{"gpu3", 	no_argument, 		&use_gpu3, 1},
+	    {"gpu2", 	no_argument, 		&use_gpu2, 1},
+	    {"gpu1", 	no_argument, 		&use_gpu1, 1},
+	    {"cpu", 	no_argument, 		&use_cpu, 1},
+	    {"all", 	no_argument, 		0, 'z'},
 	    {"help", no_argument, 0, 'h'},
 	    {0, 0, 0, 0}
 	};
@@ -120,6 +136,9 @@ int main (int argc, char **argv) {
 	    printf("Using debug level: %d \n", atoi(optarg));
 	    debug_flag = atoi(optarg);
 	    break;
+	case 'z':
+	    printf("Running all tests\n");
+	    use_cpu = use_gpu1 = use_gpu2 = 1;
 	default:
 	    continue;
 	}
@@ -127,19 +146,39 @@ int main (int argc, char **argv) {
 
     bool gpu_version = false;
 
-    run_and_print_stats("CPU",
-			num_levels, num_initial, epsilon,
-			alpha, beta, gamma,
-			debug_flag, use_timings,
-			gpu_version, 0);
+    if (use_cpu)
+	run_and_print_stats(
+	    "CPU",
+	    num_levels, num_initial, epsilon,
+	    alpha, beta, gamma,
+	    debug_flag, use_timings,
+	    gpu_version, 0);
 
     gpu_version = true;
 
-    run_and_print_stats("GPU",
+    if (use_gpu1)
+		run_and_print_stats(
+			"GPU",
 			num_levels, num_initial, epsilon,
 			alpha, beta, gamma,
 			debug_flag, use_timings,
 			gpu_version, 0);
+		
+	if (use_gpu2)
+		run_and_print_stats(
+			"GPU_Reduce",
+			num_levels, num_initial, epsilon,
+			alpha, beta, gamma,
+			debug_flag, use_timings,
+			gpu_version, 1);
+		
+	if (use_gpu3)
+		run_and_print_stats(
+			"GPU_Milstein",
+			num_levels, num_initial, epsilon,
+			alpha, beta, gamma,
+			debug_flag, use_timings,
+			gpu_version, 2);
 
     return 0;
 }
@@ -151,6 +190,9 @@ void run_and_print_stats(
     float alpha, float beta, float gamma,
     int  debug_level, bool use_timings,
     bool gpu_version, int variation) {
+		
+	using namespace std;
+	using namespace std::chrono;
 
     printf("----------------------------\n");
     printf("Running %s: \n", run_name);
@@ -162,28 +204,44 @@ void run_and_print_stats(
 
     printf("num_levels: %d\nnum_initial: %d\nepsilon: %f\nalpha: %f\nbeta: %f\ngamma: %f\n", 
 	   num_levels, n_initial, epsilon, alpha, beta, gamma);
+	   
+	high_resolution_clock::time_point t1 = high_resolution_clock::now();
 
     if (!gpu_version) {
     	//Run the CPU version this project is based off
-	val = mlmc_cpu(
-	    num_levels, n_initial, epsilon,
-	    alpha, beta, gamma,
-	    p_samples_per_level_out,
-	    p_cost_per_level_out,
-	    debug_level, use_timings);
+		val = mlmc_cpu(
+			num_levels, n_initial, epsilon,
+			alpha, beta, gamma,
+			p_samples_per_level_out,
+			p_cost_per_level_out,
+			debug_level, use_timings);
     } else {
     	//Run the GPU version. Switch based on variant.
-	val = mlmc_gpu(
-	    num_levels, n_initial, epsilon,
-	    alpha, beta, gamma,
-	    p_samples_per_level_out,
-	    p_cost_per_level_out,
-	    debug_level, use_timings);
+		bool gpu_reduce = false;
+		bool use_milstein = false;
+		
+		if (variation == 0) gpu_reduce = true;
+		if (variation == 2) use_milstein = true;
+		
+		val = mlmc_gpu(
+			num_levels, n_initial, epsilon,
+			alpha, beta, gamma,
+			p_samples_per_level_out,
+			p_cost_per_level_out,
+			debug_level, use_timings, 
+			gpu_reduce, use_milstein);
     }
+
+    high_resolution_clock::time_point t2 = high_resolution_clock::now();
 
     for (int i = 0; i < num_levels; i++) {
     	printf("Level %d: Num samples - %d, Cost - %f \n", i,
 	       p_cost_per_level_out[i], p_samples_per_level_out[i]);
+    }
+	
+	if (use_timings) {
+		std::chrono::duration<float, std::milli> fp_ms = t2 - t1;
+		printf("Ran in %.2f ms\n", fp_ms.count());
     }
 
 }
