@@ -3,7 +3,7 @@ INC	:= -I$(CUDA_HOME)/include -I.
 LIB	:= -L$(CUDA_HOME)/lib64 -lcudart -lcurand
 
 GCCFLAGS 	:= -std=c++11
-NVCCFLAGS	:= -lineinfo -arch=sm_35 --ptxas-options=-v --use_fast_math
+NVCCFLAGS	:= -lineinfo -arch=sm_53 --ptxas-options=-v --use_fast_math
 # NVCCFLAGS	:= -lineinfo -arch=sm_50 --ptxas-options=-v --use_fast_math
 
 all:	mlmc 

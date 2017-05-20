@@ -155,6 +155,7 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
       //	- Expectation squared. if -ve, set to 0.
       Vl[l] = fmaxf(suml[2][l]/suml[0][l] - ml[l]*ml[l], 0.0f);
 
+	  printf("level %d: variance %.5f expectation %.5f\n", l, Vl[l], ml[l]);
       // If gamma 0 - estimate as average cost.
       if (gamma_0 <= 0.0f) Cl[l] = NlCl[l] / suml[0][l];
 

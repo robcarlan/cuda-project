@@ -11,15 +11,18 @@
 #include <cuda.h>
 #include <curand.h>
 
-#if __CUDA_ARCH__ >= 530
+//#if __CUDA_ARCH__ >= 530
 #include <cuda_fp16.h>
-#else
-#warning "CUDA half precision not supported!"
-#endif
+//#pragma message("Compiling with CUDA half precision")
+//#else
+//#warning "CUDA half precision not supported!"
+//#endif
 
 #include <helper_cuda.h>
 
 void regression(int, float *, float *, float &a, float &b);
+void Check_CUDA_Error(const char *message);
+int round_to_grid_size(int grid_size, int n);
 
 float mlmc_gpu(
 	int num_levels,
@@ -28,6 +31,20 @@ float mlmc_gpu(
 	int *out_samples_per_level, float *out_cost_per_level,
 	int debug_level, bool use_timings, 
 	bool gpu_reduce, bool milstein);
+	
+int round_to_grid_size(int grid_size, int n) {
+	if (n % grid_size == 0) return n;
+	else return (n / grid_size + 1)  * grid_size;
+}
+
+void Check_CUDA_Error(const char *message) {
+	cudaError_t error = cudaGetLastError();
+	if(error!=cudaSuccess) {
+		fprintf(stderr,"ERROR: %s: %s\n", message, 
+		cudaGetErrorString(error) );
+		exit(-1);
+	}
+}
 
 ////////////////////////////////////////////////////////////////////////
 // CUDA global constants
@@ -58,11 +75,11 @@ __constant__ double T_dbl, r_dbl, sigma_dbl, rho_dbl, alpha_dbl, dt_dbl, con1_db
 // Note that the more complex version mlqmc06_l uses a Milstein method of discretisation which adds another term to Euler disc.
 // Euler has strong order of convergence sqrt(delta(t)) compared to Milsteins delta(T)
 
-__device__ void sum_reduce(double *d_v, double *d_v_sq) {
-	extern  __shared__  float temp[];
-	extern  __shared__  float tempsq[];
+__global__ void sum_reduce(double *d_v, double *d_v_sq) {
+	extern __shared__  float temp[];
+	extern __shared__  float tempsq[];
 	
-    int tid = threadIdx.x;
+    int tid = threadIdx.x + blockIdx.x*blockDim.x;
 
     // first, each thread loads data into shared memory
     temp[tid] = d_v[tid];
@@ -88,7 +105,7 @@ __device__ void sum_reduce(double *d_v, double *d_v_sq) {
 	} 
 }
 
-#if __CUDA_ARCH__ >= 530
+//#if __CUDA_ARCH__ >= 530
 __global__ void pathcalc_half(float *d_z, double *d_v, double *d_v_sq)
 {
 
@@ -97,12 +114,11 @@ __global__ void pathcalc_half(float *d_z, double *d_v, double *d_v_sq)
   __half negpoint1 = __float2half(-0.1f);
 
   __half s1, s2, y1, y2;
-  float payoff;
+  float payoff = 0.0f;
   int   ind;
 
   // move array pointers to correct position
 
-  // version 1
   ind = threadIdx.x + 2*N*blockIdx.x*blockDim.x;
 
   // path calculation
@@ -115,36 +131,37 @@ __global__ void pathcalc_half(float *d_z, double *d_v, double *d_v_sq)
     ind += blockDim.x;      // shift pointer to next element
 
     y2   = __hfma(__float2half((float)rho_dbl), y1,
-		  __half_hmul(__float2half((float)alpha_dbl), __float2half(d_z[ind])));
+		  __hmul(__float2half((float)alpha_dbl), __float2half(d_z[ind])));
     ind += blockDim.x;      // shift pointer to next element
 
-    s1 = __hmul(s1, (__hfma(con2_dbl, y1, con1_dbl));
-    s2 = __hmul(s2, (__hfma(con2_dbl, y2, con1_dbl));
+    s1 = __hmul(s1, (__hfma(__float2half((float)con2_dbl), y1, __float2half((float)con1_dbl))));
+    s2 = __hmul(s2, (__hfma(__float2half((float)con2_dbl), y2, __float2half((float)con1_dbl))));
+  
   }
 
   // put payoff value into device array
 
   payoff = 0.0f;
-  __half s1diff = __hsub2(s1, one);
-  __half s2diff = __hsub2(s2, one);
+  __half s1diff = __hsub(s1, one);
+  __half s2diff = __hsub(s2, one);
 
   if ( 	__hgt(s1diff, negpoint1) && __hlt(s1diff, point1) &&
 		__hgt(s2diff, negpoint1) && __hlt(s2diff, point1) )
-	  payoff = hexp(hmul(__float2half(-r_dbl)
-					*__float2half(T_dbl)));
-
+      payoff = __half2float(hexp(__hmul(__float2half((float)-r_dbl),
+					__float2half((float)T_dbl))) );
+  
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff;
   d_v_sq[threadIdx.x + blockIdx.x*blockDim.x] = payoff * payoff;
 }
-#else 
-#define pathcalc_half pathcalc_float
-#endif
+//#else 
+//#define pathcalc_half pathcalc_float
+//#endif
 
-#if __CUDA_ARCH__ >= 530
+//#if __CUDA_ARCH__ >= 530
 __global__ void pathcalc_float(float *d_z, double *d_v, double *d_v_sq)
 {
-  float s1, s2, y1, y2, payoff;
-  float s1h, s2h, y1h, y2h, payoffh;
+  float s1, s2, y1, y2, payoff, payoffh;
+  __half s1h, s2h, y1h, y2h;
   int   ind;
 
   // move array pointers to correct position
@@ -170,40 +187,43 @@ __global__ void pathcalc_float(float *d_z, double *d_v, double *d_v_sq)
     s1 = s1*(con1_dbl + con2_dbl *y1);
     s2 = s2*(con1_dbl + con2_dbl *y2);
 	
-	y1h   = __float2half(d_z[ind]);
+    y1h   = __float2half(d_z[ind]);
     y2h   = __hfma(__float2half((float)rho_dbl), y1h,
-		  __half_hmul(__float2half((float)alpha_dbl), __float2half(d_z[ind])));
-    s1h = __hmul(s1, (__hfma(con2_dbl, y1h, con1_dbl));
-    s2h = __hmul(s2, (__hfma(con2_dbl, y2h, con1_dbl));
+		  __hmul(__float2half((float)alpha_dbl), __float2half(d_z[ind])));
+    s1h = __hmul(s1h, (__hfma(__float2half((float)con2_dbl), y1h, __float2half((float)con1_dbl))));
+    s2h = __hmul(s2h, (__hfma(__float2half((float)con2_dbl), y2h, __float2half((float)con1_dbl))));
+	
   }
 
   // put payoff value into device array
 
   payoff = 0.0f;
+  payoffh = 0.0f;
   if ( fabs(s1-1.0f)<0.1f && fabs(s2-1.0f)<0.1f ) payoff = exp(-r_dbl * T_dbl);
   
-  __half s1diff = __hsub2(s1h, one);
-  __half s2diff = __hsub2(s2h, one);
-    if (__hgt(s1diff, negpoint1) && __hlt(s1diff, point1) &&
-		__hgt(s2diff, negpoint1) && __hlt(s2diff, point1) )
-		payoffh = hexp(hmul(__float2half(-r_dbl)
-					*__float2half(T_dbl)));
-
-  float converted = __half2float(payoffh);
-
-  d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff - converted;
-  d_v_sq[threadIdx.x + blockIdx.x*blockDim.x] = (payoff - converted) * (payoff - converted);
+  __half s1diff = __hsub(s1h, one);
+  __half s2diff = __hsub(s2h, one);
   
-   printf("%.17g\n", d_v[threadIdx.x + blockIdx.x*blockDim.x]);
+  if (__hgt(s1diff, negpoint1) && __hlt(s1diff, point1) &&
+	  __hgt(s2diff, negpoint1) && __hlt(s2diff, point1) )
+	payoffh = __half2float(
+					hexp(__hmul(
+							__float2half((float)(-r_dbl)),
+							__float2half((float)T_dbl))));		
+
+
+  d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff - payoffh;
+  d_v_sq[threadIdx.x + blockIdx.x*blockDim.x] = (payoff - payoffh) * (payoff - payoffh);
+
 }
-#else 
-__global__ void pathcalc_float(float *d_z, double *d_v, double *d_v_sq)
-{
+//#else 
+//__global__ void pathcalc_float(float *d_z, double *d_v, double *d_v_sq)
+//{
 	//As estimators would be the same! Not great at all.
-  d_v[threadIdx.x + blockIdx.x*blockDim.x] = 0.0;
-  d_v_sq[threadIdx.x + blockIdx.x*blockDim.x] = 0.0;
-}	
-#endif
+//  d_v[threadIdx.x + blockIdx.x*blockDim.x] = 0.0;
+//  d_v_sq[threadIdx.x + blockIdx.x*blockDim.x] = 0.0;
+//}	
+//#endif
 
 template <bool gpu_reduce>
 __global__ void pathcalc_double(float *d_z, double *d_v, double *d_v_sq)
@@ -243,12 +263,9 @@ __global__ void pathcalc_double(float *d_z, double *d_v, double *d_v_sq)
   if ( abs(s1f-1.0)<0.1 && abs(s2f-1.0)<0.1 ) payofff = exp(-r_dbl * T_dbl);
 
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff - payofff;
-  d_v_sq[threadIdx.x + blockIdx.x*blockDim.x] = (payoff - payofff) * (payoff - payofff);
+  d_v_sq[threadIdx.x + blockIdx.x*blockDim.x] = (payoff - payofff) * (payoff - payofff);  
   
-  if (gpu_reduce) {
-	  
-  }
-  
+  //printf("Dif: %g \n",d_v[threadIdx.x + blockIdx.x*blockDim.x] );
 }
 
 void pathcalc(int level, int gsize, int samples, float *d_z, double *d_v, double *d_v_sq,
@@ -260,8 +277,22 @@ void pathcalc(int level, int gsize, int samples, float *d_z, double *d_v, double
 			pathcalc_float<<<samples / gsize, gsize>>>(d_z, d_v, d_v_sq);
 		if (level == 2)
 			pathcalc_double<false><<<samples / gsize, gsize>>>(d_z, d_v, d_v_sq);
+		 Check_CUDA_Error("Euler Kernel Execution Failed!\n");
+		 
 	} else {
 		pathcalc_float<<<samples / gsize, gsize>>>(d_z, d_v, d_v_sq);
+		
+		 Check_CUDA_Error("Milstein Kernel Execution Failed!\n");
+	}
+	
+	if (gpu_reduce) {
+		sum_reduce<<<samples / gsize, gsize, 2 * sizeof(double)>>>(d_v, d_v_sq);
+		
+		 Check_CUDA_Error("GPU Reduce Kernel Failed!\n");
+		 
+		 //Sum over blocks.
+		 
+		 //Optimisation - threadfence shuffles and stuff kernelise blocks
 	}
 }
 
@@ -284,7 +315,7 @@ float mlmc_gpu(
 
   if (debug_level) {
       printf("CUDA multi-level monte carlo variant 1\n");
-#if __CUDA_ARCH__ >= 530
+#if __CUDA_ARCH__ >= 520
       printf("(CUDA half precision enabled...)\n");
 #else
       printf("(CUDA half precision NOT enabled...)\n");
@@ -294,9 +325,12 @@ float mlmc_gpu(
   //This variant sets LMin and LMax set to be 2.
   int Lmin = 2;
   int Lmax = 2;
+  int grid_size = 64;
 
   //Number of timesteps.
   int h_N = 100;
+  
+  n_initial = round_to_grid_size(grid_size, n_initial);
 
   double   h_T, h_r, h_sigma, h_rho, h_alpha, h_dt, h_con1, h_con2;
 
@@ -305,7 +339,7 @@ float mlmc_gpu(
   h_sigma = 0.1;
   h_rho   = 0.5;
   h_alpha = sqrt(1.0-h_rho*h_rho);
-  h_dt    = 1.0/ n_initial;
+  h_dt    = 1.0/ 128;
   h_con1  = 1.0 + h_r*h_dt;
   h_con2  = sqrt(h_dt)*h_sigma;
 
@@ -388,6 +422,8 @@ float mlmc_gpu(
       if (diag) printf(" %d ",dNl[l]);
 
       if (dNl[l]>0) {
+		  
+		sums[0] = sums[1] = sums[2] = 0.0f;
 
     	int num_paths = dNl[l];
 
@@ -422,8 +458,6 @@ float mlmc_gpu(
 			   milli, 2.0*h_N*num_paths/(0.001*milli));
 		}
 
-		int grid_size = 64;
-
 		if (debug_level)
 			printf("Runing kernel level %d grid_size %d num_paths %d\n", l, grid_size, num_paths);
 
@@ -452,7 +486,7 @@ float mlmc_gpu(
 				// Number of timestep is 2^bit precision
 				sums[0] += 1 << l;
 			
-				if (diag > 2 && i < 25)
+				if (diag > 3)
 					printf("[%d,%d] val: %f val_sq: %f\n", l, i, h_v[i], h_v_sq[i]);
 			
 				sums[1] += h_v[i];
@@ -466,7 +500,7 @@ float mlmc_gpu(
 		}
 
 		if (debug_level)
-			printf("reduce completed %d - %f %f \n", l, sums[1], sums[2]);
+			printf("reduce completed %d - %g %g \n", l, sums[1], sums[2]);
 
 		suml[0][l] += (double) num_paths;
 		suml[1][l] += sums[1];
@@ -492,12 +526,12 @@ float mlmc_gpu(
     sum = 0.0f;
 
     for (int l=0; l<=L; l++) {
-	  printf("ML %f" , suml[1][l]);
+	  printf("ML %g \n" , suml[1][l]);
       ml[l] = fabs(suml[1][l]/suml[0][l]);
       Vl[l] = fmaxf(suml[2][l]/suml[0][l] - ml[l]*ml[l], 0.0f);
 
       if (diag > 2)
-	  printf("level %d: variance %.5f expectation %.5f\n", l, Vl[l], ml[l]);
+		printf("level %d: variance %.5f expectation %.5f\n", l, Vl[l], ml[l]);
       
       if (gamma_0 <= 0.0f) Cl[l] = NlCl[l] / suml[0][l];
 
@@ -510,7 +544,7 @@ float mlmc_gpu(
     }
 
     if (diag > 1) {
-	printf("Next level samples: ");
+		printf("Next level samples: ");
     }
     
     //Now update the number of samples for each level.
@@ -519,8 +553,10 @@ float mlmc_gpu(
                        sqrtf(Vl[l]/Cl[l])*sum/((1.0f-theta)*eps*eps)
                      - suml[0][l] ) );
       if (diag > 1) {
-	  printf(" level %d - %d", l, dNl[l]);
+		printf(" level %d - %d (rounded to %d), ", l, dNl[l], round_to_grid_size(grid_size, dNl[l]));
       }
+	  
+	  dNl[l] = round_to_grid_size(grid_size, dNl[l]);
     }
    
     if (diag > 1) {
@@ -587,10 +623,12 @@ float mlmc_gpu(
 
           sum = 0.0f;
           for (int l=0; l<=L; l++) sum += sqrtf(Vl[l]*Cl[l]);
-          for (int l=0; l<=L; l++)
+          for (int l=0; l<=L; l++) {
             dNl[l] = ceilf( fmaxf( 0.0f,
                             sqrtf(Vl[l]/Cl[l])*sum/((1.0f-theta)*eps*eps)
                           - suml[0][l] ) );
+			dNl[l] = round_to_grid_size(grid_size, dNl[l]);
+		  }
         }
       }
     }

@@ -147,12 +147,12 @@ int main (int argc, char **argv) {
     bool gpu_version = false;
 
     if (use_cpu)
-	run_and_print_stats(
-	    "CPU",
-	    num_levels, num_initial, epsilon,
-	    alpha, beta, gamma,
-	    debug_flag, use_timings,
-	    gpu_version, 0);
+		run_and_print_stats(
+			"CPU",
+			num_levels, num_initial, epsilon,
+			alpha, beta, gamma,
+			debug_flag, use_timings,
+			gpu_version, 0);
 
     gpu_version = true;
 
@@ -220,7 +220,7 @@ void run_and_print_stats(
 		bool gpu_reduce = false;
 		bool use_milstein = false;
 		
-		if (variation == 0) gpu_reduce = true;
+		if (variation == 1) gpu_reduce = true;
 		if (variation == 2) use_milstein = true;
 		
 		val = mlmc_gpu(
@@ -236,8 +236,10 @@ void run_and_print_stats(
 
     for (int i = 0; i < num_levels; i++) {
     	printf("Level %d: Num samples - %d, Cost - %f \n", i,
-	       p_cost_per_level_out[i], p_samples_per_level_out[i]);
+	      p_samples_per_level_out[i],  p_cost_per_level_out[i]);
     }
+	
+	printf("Estimated  value: %f \n", val);
 	
 	if (use_timings) {
 		std::chrono::duration<float, std::milli> fp_ms = t2 - t1;
