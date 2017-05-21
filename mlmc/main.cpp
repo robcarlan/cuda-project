@@ -13,7 +13,7 @@ float mlmc_cpu(
 
 float mlmc_gpu(
     int num_levels,
-    int n_initial, float epsilon, 
+    int n_initial, int timesteps, float epsilon, 
     float alpha_0, float beta_0, float gamma_0, 
     int *out_samples_per_level, float *out_cost_per_level,
     int use_debug, bool use_timings, 
@@ -29,7 +29,7 @@ float monte_carlo_gpu(
 void run_and_print_stats(
     const char * run_name,
     int num_levels,
-    int n_initial, float epsilon,
+    int n_initial, int num_timesteps, float epsilon,
     float alpha, float beta, float gamma,
     int debug_level, bool use_timings,
     bool gpu_version, int variation);
@@ -45,7 +45,8 @@ int main (int argc, char **argv) {
 	
     int num_levels = 3;
     int num_initial = 100;
-	
+    int num_timesteps = 64;
+    
     float epsilon = 0.1f;
     float alpha = -1.0f;
     float beta = -1.0f;
@@ -65,6 +66,7 @@ int main (int argc, char **argv) {
 	    {"debug", 	required_argument, 0, 'd'},
 	    {"num_levels", 	required_argument, 	&num_levels, 'l'},
 	    {"num_initial", required_argument, 	0, 'i'},
+	    {"num_timesteps", required_argument, 	0, 't'},
 	    {"epsilon", 	required_argument, 	0, 'e'},
 	    {"alpha", 		required_argument, 	0, 'a'},
 	    {"beta", 		required_argument, 	0, 'b'},
@@ -95,6 +97,7 @@ int main (int argc, char **argv) {
 	    printf("Usage: \n");
 	    printf("--num_levels = number of mlmc levels to use. \n");
 	    printf("--num_initial = number of initial samples to use. \n");
+	    printf("--num_timesteps = number of teimsteps to use. \n");
 	    printf("--epsilon = goal accuracy epsilon. \n");
 	    printf("--alpha = Desired alpha parameter. \n");
 	    printf("--beta = Desired beta parameter. \n");
@@ -119,6 +122,10 @@ int main (int argc, char **argv) {
 	case 'i':
 	    printf("using num_initial :%s\n", optarg);
 	    num_initial = atoi(optarg);
+	    break;
+	case 't':
+	    printf("using num_timesteps :%s\n", optarg);
+	    num_timesteps = atoi(optarg);
 	    break;
 	case 'a':
 	    printf("using alpha :%s\n", optarg);
@@ -149,7 +156,8 @@ int main (int argc, char **argv) {
     if (use_cpu)
 		run_and_print_stats(
 			"CPU",
-			num_levels, num_initial, epsilon,
+			num_levels, num_initial, num_timesteps,
+			epsilon,
 			alpha, beta, gamma,
 			debug_flag, use_timings,
 			gpu_version, 0);
@@ -157,28 +165,34 @@ int main (int argc, char **argv) {
     gpu_version = true;
 
     if (use_gpu1)
-		run_and_print_stats(
-			"GPU",
-			num_levels, num_initial, epsilon,
-			alpha, beta, gamma,
-			debug_flag, use_timings,
-			gpu_version, 0);
+	run_and_print_stats(
+	    "GPU Euler ",
+	    num_levels, num_initial, num_timesteps,
+	    epsilon,
+	    alpha, beta, gamma,
+	    debug_flag, use_timings,
+	    gpu_version, 0);
 		
-	if (use_gpu2)
-		run_and_print_stats(
-			"GPU_Reduce",
-			num_levels, num_initial, epsilon,
-			alpha, beta, gamma,
-			debug_flag, use_timings,
-			gpu_version, 1);
-		
-	if (use_gpu3)
-		run_and_print_stats(
-			"GPU_Milstein",
-			num_levels, num_initial, epsilon,
-			alpha, beta, gamma,
-			debug_flag, use_timings,
-			gpu_version, 2);
+    if (use_gpu2)
+	run_and_print_stats(
+	    "GPU_Reduce Euler ",
+	    num_levels, num_initial, num_timesteps,
+	    epsilon,
+	    alpha, beta, gamma,
+	    debug_flag, use_timings,
+	    gpu_version, 1);
+
+
+    gpu_version = true;
+
+    if (use_gpu3)
+	run_and_print_stats(
+	    "GPU_Milstein no GPU Reduce ",
+	    num_levels, num_initial, num_timesteps,
+	    epsilon,
+	    alpha, beta, gamma,
+	    debug_flag, use_timings,
+	    gpu_version, 2);
 
     return 0;
 }
@@ -186,7 +200,7 @@ int main (int argc, char **argv) {
 void run_and_print_stats(
     const char * run_name,
     int num_levels,
-    int n_initial, float epsilon,
+    int n_initial, int num_timesteps, float epsilon,
     float alpha, float beta, float gamma,
     int  debug_level, bool use_timings,
     bool gpu_version, int variation) {
@@ -202,34 +216,35 @@ void run_and_print_stats(
 
     float val;
 
-    printf("num_levels: %d\nnum_initial: %d\nepsilon: %f\nalpha: %f\nbeta: %f\ngamma: %f\n", 
-	   num_levels, n_initial, epsilon, alpha, beta, gamma);
+    printf("num_levels: %d\nnum_initial: %d\nnum_timesteps: %d\nepsilon: %f\nalpha: %f\nbeta: %f\ngamma: %f\n", 
+	   num_levels, n_initial, num_timesteps, epsilon, alpha, beta, gamma);
 	   
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
 
     if (!gpu_version) {
     	//Run the CPU version this project is based off
-		val = mlmc_cpu(
-			num_levels, n_initial, epsilon,
-			alpha, beta, gamma,
-			p_samples_per_level_out,
-			p_cost_per_level_out,
-			debug_level, use_timings);
+	val = mlmc_cpu(
+	    num_levels, n_initial, epsilon,
+	    alpha, beta, gamma,
+	    p_samples_per_level_out,
+	    p_cost_per_level_out,
+	    debug_level, use_timings);
     } else {
     	//Run the GPU version. Switch based on variant.
-		bool gpu_reduce = false;
-		bool use_milstein = false;
-		
-		if (variation == 1) gpu_reduce = true;
-		if (variation == 2) use_milstein = true;
-		
-		val = mlmc_gpu(
-			num_levels, n_initial, epsilon,
-			alpha, beta, gamma,
-			p_samples_per_level_out,
-			p_cost_per_level_out,
-			debug_level, use_timings, 
-			gpu_reduce, use_milstein);
+	bool gpu_reduce = false;
+	bool use_milstein = false;
+	
+	if (variation == 1) gpu_reduce = true;
+	if (variation == 2) use_milstein = true;
+	
+	val = mlmc_gpu(
+	    num_levels, n_initial, num_timesteps,
+	    epsilon,
+	    alpha, beta, gamma,
+	    p_samples_per_level_out,
+	    p_cost_per_level_out,
+	    debug_level, use_timings, 
+	    gpu_reduce, use_milstein);
     }
 
     high_resolution_clock::time_point t2 = high_resolution_clock::now();
