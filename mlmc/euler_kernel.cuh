@@ -53,7 +53,7 @@ __global__ void pathcalc_half(float *d_z, double *d_v, double *d_v_sq)
     ind += blockDim.x;      // shift pointer to next element
 
     y2   = __hfma(__float2half((float)rho_dbl), y1,
-		  __hmul(__float2half((float)alpha_dbl), __float2half(d_z[ind])));
+		    __hmul(__float2half((float)alpha_dbl), __float2half(d_z[ind])));
     ind += blockDim.x;      // shift pointer to next element
 
     s1 = __hmul(s1, (__hfma(__float2half((float)con2_dbl), y1, __float2half((float)con1_dbl))));
@@ -68,14 +68,12 @@ __global__ void pathcalc_half(float *d_z, double *d_v, double *d_v_sq)
   __half s2diff = __hsub(s2, one);
 
   if ( 	__hgt(s1diff, negpoint1) && __hlt(s1diff, point1) &&
-		__hgt(s2diff, negpoint1) && __hlt(s2diff, point1) )
+		    __hgt(s2diff, negpoint1) && __hlt(s2diff, point1) )
       payoff = (double)__half2float(hexp(__hmul(__float2half((float)(-r_dbl)),
 					__float2half((float)T_dbl))) );
   
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff;
   d_v_sq[threadIdx.x + blockIdx.x*blockDim.x] = payoff * payoff;
-
-  printf("HALF : d_v %g\n", d_v[threadIdx.x + blockIdx.x*blockDim.x]);
 }
 //#else 
 //#define pathcalc_half pathcalc_float
@@ -113,14 +111,10 @@ __global__ void pathcalc_float(float *d_z, double *d_v, double *d_v_sq)
 	
     y1h   = __float2half(d_z[ind]);
     y2h   = __hfma(__float2half((float)rho_dbl), y1h,
-		  __hmul(__float2half((float)alpha_dbl), __float2half(d_z[ind])));
+		        __hmul(__float2half((float)alpha_dbl), __float2half(d_z[ind])));
     s1h = __hmul(s1h, (__hfma(__float2half((float)con2_dbl), y1h, __float2half((float)con1_dbl))));
     s2h = __hmul(s2h, (__hfma(__float2half((float)con2_dbl), y2h, __float2half((float)con1_dbl))));
-    //printf("s1: %f s1h:%f\n", s1, __half2float(s1h));
-    //  printf("s2: %f s2h:%f\n", s2, __half2float(s2h));
   }
-  printf("s1: %f s1h:%f\n", s1, __half2float(s1h));
-  printf("s2: %f s2h:%f\n", s2, __half2float(s2h));
  
   // put payoff value into device array
 
@@ -134,11 +128,10 @@ __global__ void pathcalc_float(float *d_z, double *d_v, double *d_v_sq)
   if (__hgt(s1diff, negpoint1) && __hlt(s1diff, point1) &&
       __hgt(s2diff, negpoint1) && __hlt(s2diff, point1) )
       payoffh = __half2float(
-	  hexp(__hmul(
-		   __float2half((float)(-r_dbl)),
-		   __float2half((float)T_dbl))));		
+	    hexp(__hmul(
+		    __float2half((float)(-r_dbl)),
+		    __float2half((float)T_dbl))));		
 
-  printf("payoff diff: %f\n", payoff - payoffh);
   d_v[threadIdx.x + blockIdx.x*blockDim.x] = payoff - payoffh;
   d_v_sq[threadIdx.x + blockIdx.x*blockDim.x] = (payoff - payoffh) * (payoff - payoffh);
 
@@ -169,16 +162,16 @@ __global__ void pathcalc_double(float *d_z, double *d_v, double *d_v_sq)
 
   for (int n=0; n<N; n++) {
     y1   = d_z[ind];
-	y1f   = d_z[ind];
+	  y1f   = d_z[ind];
     ind += blockDim.x;      // shift pointer to next element
 
     y2   = rho_dbl *y1 + alpha_dbl *d_z[ind];
-	y2f   = (float)rho_dbl * y1f + alpha_dbl * d_z[ind];
+	  y2f   = (float)rho_dbl * y1f + alpha_dbl * d_z[ind];
     ind += blockDim.x;      // shift pointer to next element
 
     s1 = s1*(con1_dbl + con2_dbl *y1);
     s2 = s2*(con1_dbl + con2_dbl *y2);
-	s1f = s1f*(con1_dbl + con2_dbl *y1f);
+	  s1f = s1f*(con1_dbl + con2_dbl *y1f);
     s2f = s2f*(con1_dbl + con2_dbl *y2f);
   }
 

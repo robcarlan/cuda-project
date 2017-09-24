@@ -37,17 +37,17 @@
 extern void mcqmc06_l(int l, int N, double *sums); 
 
 float mlmc(int Lmin, int Lmax, int N0, float eps,
-           float alpha_0,float beta_0,float gamma_0, int *Nl, float *Cl,
-	   bool use_debug
+      float alpha_0,float beta_0,float gamma_0, int *Nl, float *Cl,
+      bool use_debug
     );
 
 extern void regression(int, float *, float *, float &a, float &b);
 
 float mlmc_cpu(int num_levels,
-		int n_initial, float epsilon,
-		float alpha_0, float beta_0, float gamma_0,
-		int *out_samples_per_level, float *out_cost_per_level,
-		bool use_debug, bool use_timings) {
+      int n_initial, float epsilon,
+      float alpha_0, float beta_0, float gamma_0,
+      int *out_samples_per_level, float *out_cost_per_level,
+      bool use_debug, bool use_timings) {
     return mlmc(2, num_levels, n_initial, epsilon,
 		    alpha_0, beta_0, gamma_0,
 		    out_samples_per_level, out_cost_per_level, 
@@ -56,9 +56,8 @@ float mlmc_cpu(int num_levels,
 
 
 float mlmc(int Lmin, int Lmax, int N0, float eps,
-           float alpha_0,float beta_0,float gamma_0, int *Nl, float *Cl, 
-	   bool use_debug
-) {
+      float alpha_0,float beta_0,float gamma_0, int *Nl, float *Cl, 
+      bool use_debug) {
 
   double sums[7], suml[3][21];
   float  ml[21], Vl[21], NlCl[21], x[21], y[21],
@@ -72,17 +71,17 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
   //
 
   if (Lmin<2) {
-    fprintf(stderr,"error: needs Lmin >= 2 \n");
-    exit(1);
+      fprintf(stderr,"error: needs Lmin >= 2 \n");
+      exit(1);
   }
   if (Lmax<Lmin) {
-    fprintf(stderr,"error: needs Lmax >= Lmin \n");
-    exit(1);
+      fprintf(stderr,"error: needs Lmax >= Lmin \n");
+      exit(1);
   }
 
   if (N0<=0 || eps<=0.0f) {
-    fprintf(stderr,"error: needs N>0, eps>0 \n");
-    exit(1);
+      fprintf(stderr,"error: needs N>0, eps>0 \n");
+      exit(1);
   }
 
   //
@@ -155,7 +154,7 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
       //	- Expectation squared. if -ve, set to 0.
       Vl[l] = fmaxf(suml[2][l]/suml[0][l] - ml[l]*ml[l], 0.0f);
 
-	  printf("level %d: variance %.5f expectation %.5f\n", l, Vl[l], ml[l]);
+	    printf("level %d: variance %.5f expectation %.5f\n", l, Vl[l], ml[l]);
       // If gamma 0 - estimate as average cost.
       if (gamma_0 <= 0.0f) Cl[l] = NlCl[l] / suml[0][l];
 
@@ -171,7 +170,7 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
     }
 
     if (diag > 1) {
-	printf("Next level samples: ");
+	    printf("Next level samples: ");
     }
     
     //Now update the number of samples for each level.
@@ -180,12 +179,12 @@ float mlmc(int Lmin, int Lmax, int N0, float eps,
                        sqrtf(Vl[l]/Cl[l])*sum/((1.0f-theta)*eps*eps)
                      - suml[0][l] ) );
       if (diag > 1) {
-	  printf(" level %d - %d", l, dNl[l]);
+	      printf(" level %d - %d", l, dNl[l]);
       }
     }
 
     if (diag > 1) {
-	printf("\n");
+	    printf("\n");
     }
  
     //
